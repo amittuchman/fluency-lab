@@ -163,8 +163,8 @@ it('readiness: a card is ready after its last two answers were correct', async (
   await reviewCard(repos, { ...base, now: NOW })
   expect((await readinessFor(repos, [note])).readyIds).toEqual([])
   await reviewCard(repos, { ...base, now: NOW + 1 })
-  // Locked templates count too: a drill covers every card of the package.
-  expect(await readinessFor(repos, [note])).toMatchObject({ total: 2, ready: 1, readyIds: [card.id] })
+  // Locked templates count too (recall-full and speak): a drill covers every card of the package.
+  expect(await readinessFor(repos, [note])).toMatchObject({ total: 3, ready: 1, readyIds: [card.id] })
 })
 
 it('drill: a locked card can be drilled and is unlocked by it; undo re-locks it', async () => {

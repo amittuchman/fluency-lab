@@ -33,7 +33,7 @@ export function templateLabel(template: string): string {
 }
 
 /** Bumped when the template set changes, so existing notes get reconciled on startup. */
-export const TEMPLATE_VERSION = 1
+export const TEMPLATE_VERSION = 2 // 2: dictation (vocab) and speak (sentence)
 
 const h = (...parts: string[]) => hashString(parts.join('␟'))
 
@@ -170,6 +170,7 @@ export function templatesFor(content: NoteContent): TemplateSpec[] {
         ['recog', h(f.term, f.definition)],
         ex ? ['cloze-use', h(ex.example, f.term)] : null,
         ['produce', h(f.definition, f.term)],
+        ['dictation', h('dictation', f.term)],
       ])
     }
     case 'sentence': {
@@ -177,6 +178,7 @@ export function templatesFor(content: NoteContent): TemplateSpec[] {
       return chain([
         ['chunk-cloze', h(t)],
         ['recall-full', h(clozePlain(t))],
+        ['speak', h('speak', clozePlain(t))],
       ])
     }
     case 'fix': {
@@ -206,7 +208,7 @@ export function templatesFor(content: NoteContent): TemplateSpec[] {
   }
 }
 
-/** Templates that need audio (Phase 4) are added here later; none yet. */
+/** Templates whose prompt is audio or speech; they fall back to text when the browser lacks support. */
 export function isAudioTemplate(template: string): boolean {
   return template === 'dictation' || template === 'speak'
 }

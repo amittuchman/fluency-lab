@@ -12,6 +12,7 @@ import { StudyCard } from '../components/StudyCard'
 import { Button, Empty, PageHeader } from '../components/ui'
 import { formatDate, formatDuration, pct } from '../format'
 import { useRepoQuery, useSettings } from '../hooks'
+import { useVoices } from '../speech'
 
 type Phase = { kind: 'setup' } | { kind: 'run'; questions: QuizQuestion[]; config: QuizConfig; startedAt: number } | { kind: 'done'; result: QuizResult; prompts: Map<string, Prompt> }
 
@@ -187,11 +188,12 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig) =>
 
 function QuizRun({ questions, config, startedAt, onFinish }: { questions: QuizQuestion[]; config: QuizConfig; startedAt: number; onFinish: (r: QuizResult, p: Map<string, Prompt>) => void }) {
   const settings = useSettings()
+  const audioOn = useVoices().length > 0
   const [index, setIndex] = useState(0)
   const answers = useRef<QuizQuestionResult[]>([])
   const prompts = useMemo(
-    () => questions.map((q) => buildPrompt(q.note, q.card, { promptLanguage: settings.promptLanguage })),
-    [questions, settings.promptLanguage],
+    () => questions.map((q) => buildPrompt(q.note, q.card, { promptLanguage: settings.promptLanguage, audio: audioOn })),
+    [questions, settings.promptLanguage, audioOn],
   )
   const [left, setLeft] = useState<number | null>(config.timerSeconds)
   const finished = useRef(false)

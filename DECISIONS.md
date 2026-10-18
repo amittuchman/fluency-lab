@@ -111,3 +111,22 @@ Non-obvious choices, newest last. Each entry: what, and why.
     fall back to typed input.
 46. **Sample fix:** "I have read that book three times" also allows the past simple in American English;
     the sample now says "three times so far", which only fits the present perfect.
+
+## Audio and speech (Phase 4)
+
+47. **New templates arrive through `TEMPLATE_VERSION` 2.** On the next start every existing note gets its
+    `dictation` (vocab) or `speak` (sentence) card, locked at the end of its unlock chain.
+48. **Audio before the reveal only when audio is the question** (dictation, "listen then type", the shown term on
+    a recognition card). On every other card the Play button appears after the reveal: hearing a cloze sentence
+    would give the answer away. `R` replays.
+49. **iOS needs a user gesture for speech.** "Autoplay on reveal" speaks inside the click/key handler that
+    reveals the card. Dictation tries to play when the card appears; if the browser blocks that, the Play button
+    is right there.
+50. **Graceful fallbacks.** No TTS or no English voice: dictation becomes "produce the word", full recall uses
+    first letters. No speech recognition: speaking cards become "say it aloud, then check" (self-graded), and the
+    Speak screen is hidden from navigation.
+51. **Speech scoring:** word-level similarity 2·LCS / (heard + target) over the best of 3 recognizer alternatives.
+    "Correct" needs every word (≥ 0.98), so a skipped "on" is caught; ≥ 0.75 is "almost" (Hard). Results are
+    labelled approximate, the user can override the grade, and "Type instead" is always offered.
+52. **Speak mode is practice only**: shadowing and speaking recall don't log reviews or change scheduling.
+53. **Quizzes skip dictation and speaking cards**, so a quiz can be taken silently (e.g. on a bus).

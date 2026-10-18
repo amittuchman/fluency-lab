@@ -203,6 +203,33 @@ export function checkAnswer(typed: string, accepted: readonly string[], opts: { 
   return { verdict: best.verdict, diff: best.diff, reference: best.reference }
 }
 
+export interface SpeechCheck {
+  verdict: Verdict
+  /** 0–1: shared words relative to both lengths (2·LCS / (|said| + |target|)). */
+  similarity: number
+  transcript: string
+  diff: DiffOp[]
+}
+
+/** Spoken answers: every word must match for "correct" (a skipped "on" is a real error); near matches are "almost". */
+export const SPEECH_CORRECT = 0.98
+export const SPEECH_ALMOST = 0.75
+
+/** Compare what the recognizer heard (its alternatives) with the target sentence; the best alternative wins. */
+export function checkSpeech(alternatives: readonly string[], target: string): SpeechCheck {
+  const t = compareWords(target).map((w) => w.key)
+  let best: SpeechCheck = { verdict: 'wrong', similarity: 0, transcript: '', diff: wordDiff('', target) }
+  for (const alt of alternatives) {
+    const a = compareWords(alt).map((w) => w.key)
+    const similarity = a.length + t.length ? (2 * lcsPairs(a, t).length) / (a.length + t.length) : 0
+    if (similarity > best.similarity || !best.transcript) {
+      const verdict: Verdict = similarity >= SPEECH_CORRECT ? 'correct' : similarity >= SPEECH_ALMOST ? 'almost' : 'wrong'
+      best = { verdict, similarity, transcript: alt, diff: wordDiff(alt, target) }
+    }
+  }
+  return best
+}
+
 export function suggestedGrade(verdict: Verdict): Grade {
   return verdict === 'correct' ? 3 : verdict === 'almost' ? 2 : 1
 }

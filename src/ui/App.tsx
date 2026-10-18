@@ -8,6 +8,7 @@ import type { CheatSheetOverrides } from '../domain/cheatsheets'
 import type { Settings as SettingsT } from '../domain/types'
 import { Empty } from './components/ui'
 import { CheatSheetContext, SettingsContext } from './hooks'
+import { speechRecognitionSupported } from './speech'
 import { Add } from './screens/Add'
 import { Drill } from './screens/Drill'
 import { FormatHelp } from './screens/FormatHelp'
@@ -18,18 +19,20 @@ import { Packages } from './screens/Packages'
 import { Quiz } from './screens/Quiz'
 import { Settings } from './screens/Settings'
 import { Stats } from './screens/Stats'
+import { Speak } from './screens/Speak'
 import { StudySession } from './screens/StudySession'
 import { TenseLab } from './screens/TenseLab'
 import { Trash } from './screens/Trash'
 import { WeakSpots } from './screens/WeakSpots'
 
-const NAV: Array<{ to: string; label: string; mobile?: boolean }> = [
+const NAV: Array<{ to: string; label: string; mobile?: boolean; needsSpeech?: boolean }> = [
   { to: '/', label: 'Home', mobile: true },
   { to: '/study', label: 'Study', mobile: true },
   { to: '/add', label: 'Add', mobile: true },
   { to: '/library', label: 'Library', mobile: true },
   { to: '/packages', label: 'Packages' },
   { to: '/tenses', label: 'Tense Lab' },
+  { to: '/speak', label: 'Speak', needsSpeech: true },
   { to: '/quiz', label: 'Quiz' },
   { to: '/weak', label: 'Weak spots' },
   { to: '/stats', label: 'Stats' },
@@ -89,6 +92,7 @@ export function App() {
               <Route path="/library" element={<Library />} />
               <Route path="/packages" element={<Packages />} />
               <Route path="/tenses" element={<TenseLab />} />
+              <Route path="/speak" element={<Speak />} />
               <Route path="/quiz" element={<Quiz />} />
               <Route path="/weak" element={<WeakSpots />} />
               <Route path="/stats" element={<Stats />} />
@@ -111,6 +115,8 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 function Layout({ children }: { children: ReactNode }) {
+  // Speak mode is hidden where the browser has no speech recognition.
+  const nav = NAV.filter((n) => !n.needsSpeech || speechRecognitionSupported())
   const [more, setMore] = useState(false)
   const location = useLocation()
   useEffect(() => setMore(false), [location.pathname])
@@ -123,7 +129,7 @@ function Layout({ children }: { children: ReactNode }) {
       <aside className="hidden w-52 shrink-0 border-r border-slate-200 p-3 md:block dark:border-slate-800">
         <div className="mb-4 px-3 pt-1 text-lg font-semibold">Fluency Lab</div>
         <nav className="space-y-0.5" aria-label="Main">
-          {NAV.map((n) => (
+          {nav.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} className={navClass}>
               {n.label}
             </NavLink>
@@ -156,7 +162,7 @@ function Layout({ children }: { children: ReactNode }) {
       {more && (
         <div className="fixed inset-x-0 bottom-14 z-40 border-t border-slate-200 bg-white p-3 shadow-lg md:hidden dark:border-slate-800 dark:bg-slate-900">
           <nav className="grid grid-cols-2 gap-1" aria-label="More">
-            {NAV.filter((n) => !n.mobile).map((n) => (
+            {nav.filter((n) => !n.mobile).map((n) => (
               <NavLink key={n.to} to={n.to} className={navClass}>
                 {n.label}
               </NavLink>

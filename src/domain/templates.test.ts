@@ -10,17 +10,19 @@ const note = (content: NoteContent, id = 'n1'): Note =>
   ({ ...content, id, tags: [], packageId: null, createdAt: 0, updatedAt: 0, suspended: false, deletedAt: null }) as Note
 
 describe('templatesFor', () => {
-  it('vocab: recog → cloze-use → produce, cloze-use only with a matching example', () => {
+  it('vocab: recog → cloze-use → produce → dictation, cloze-use only with a matching example', () => {
     const v: NoteContent = { type: 'vocab', fields: { term: 'reluctant', definition: 'unwilling', examples: ['He was reluctant to go.'] } }
     expect(templatesFor(v).map((t) => [t.template, t.order])).toEqual([
       ['recog', 0],
       ['cloze-use', 1],
       ['produce', 2],
+      ['dictation', 3],
     ])
     const noEx: NoteContent = { type: 'vocab', fields: { term: 'reluctant', definition: 'unwilling', examples: [] } }
     expect(templatesFor(noEx).map((t) => [t.template, t.order])).toEqual([
       ['recog', 0],
       ['produce', 1],
+      ['dictation', 2],
     ])
   })
   it('cloze: one independent card per cloze', () => {
@@ -37,7 +39,7 @@ describe('templatesFor', () => {
       'tense-choose',
       'tense-fill',
     ])
-    expect(templatesFor({ type: 'sentence', fields: { text: 'It depends on you.' } }).map((t) => t.template)).toEqual(['chunk-cloze', 'recall-full'])
+    expect(templatesFor({ type: 'sentence', fields: { text: 'It depends on you.' } }).map((t) => t.template)).toEqual(['chunk-cloze', 'recall-full', 'speak'])
     expect(templatesFor({ type: 'natural', fields: { mine: 'very big problem', natural: 'serious problem' } }).map((t) => t.template)).toEqual([
       'upgrade',
       'natural-cloze',

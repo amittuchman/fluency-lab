@@ -9,6 +9,7 @@ import { saveBackupFile } from '../backupFile'
 import { Banner, Button, Confirm, PageHeader } from '../components/ui'
 import { formatDate } from '../format'
 import { useRepoQuery, useSettings } from '../hooks'
+import { speak, speechRecognitionSupported, ttsSupported, useVoices } from '../speech'
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -126,9 +127,60 @@ export function Settings() {
         </Row>
       </section>
 
+      <AudioSection settings={settings} save={save} />
       <BackupSection />
       <StorageSection />
     </div>
+  )
+}
+
+function AudioSection({ settings, save }: { settings: SettingsT; save: (patch: Partial<SettingsT>) => void }) {
+  const voices = useVoices()
+  const sr = speechRecognitionSupported()
+  return (
+    <section className="card divide-y divide-slate-100 py-1 dark:divide-slate-800">
+      <h2 className="pb-2 pt-2 font-medium">Audio and speech</h2>
+      {!ttsSupported() ? (
+        <p className="py-3 text-sm">This browser has no text-to-speech. Audio cards fall back to text prompts.</p>
+      ) : voices.length === 0 ? (
+        <p className="py-3 text-sm">No English (US/UK) voice is installed. Audio cards fall back to text prompts until one is available.</p>
+      ) : (
+        <>
+          <Row label="Voice">
+            <select className="input" value={settings.ttsVoiceURI ?? ''} onChange={(e) => save({ ttsVoiceURI: e.target.value || null })}>
+              <option value="">Default (US English)</option>
+              {voices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Speed">
+            <div className="flex gap-1">
+              {[0.7, 1].map((r) => (
+                <Button key={r} size="sm" variant={settings.ttsRate === r ? 'primary' : 'secondary'} onClick={() => save({ ttsRate: r })}>
+                  {r}×
+                </Button>
+              ))}
+              <Button size="sm" variant="ghost" onClick={() => speak("The trade-off isn't as clear-cut as it looks.", { voiceURI: settings.ttsVoiceURI, rate: settings.ttsRate })}>
+                🔊 Test
+              </Button>
+            </div>
+          </Row>
+          <Row label="Play audio on reveal" hint="Reads the answer aloud when you reveal a card.">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={settings.ttsAutoplay} onChange={(e) => save({ ttsAutoplay: e.target.checked })} />
+              Autoplay
+            </label>
+          </Row>
+        </>
+      )}
+      <p className="py-3 text-sm">
+        Speech recognition: {sr ? 'available. Speaking cards and Speak mode use it.' : 'not available in this browser (try Chrome, Edge or Safari). Speaking cards become "say it aloud, then check".'}
+        {sr && <span className="muted block text-xs">Results are approximate, and some browsers send the audio to an online service.</span>}
+      </p>
+    </section>
   )
 }
 

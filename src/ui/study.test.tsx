@@ -103,6 +103,38 @@ describe('StudyCard', () => {
     expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ grade: 4, correct: true }))
   })
 
+  it('speak card: records with speech recognition, scores the transcript, shows the diff', async () => {
+    const user = userEvent.setup()
+    class FakeRecognition {
+      lang = ''
+      interimResults = false
+      maxAlternatives = 1
+      continuous = false
+      onresult: ((e: unknown) => void) | null = null
+      onerror: ((e: unknown) => void) | null = null
+      onend: (() => void) | null = null
+      start() {
+        setTimeout(() => {
+          this.onresult?.({ results: [[{ transcript: 'it depends how you define success' }]] })
+          this.onend?.()
+        }, 0)
+      }
+      stop() {}
+      abort() {}
+    }
+    vi.stubGlobal('webkitSpeechRecognition', FakeRecognition)
+    const sentence = { ...note, type: 'sentence', fields: { text: 'It depends on how you define success.', he: 'זה תלוי איך מגדירים הצלחה.' } } as Note
+    const onDone = vi.fn()
+    render(<StudyCard prompt={buildPrompt(sentence, card('speak'), { promptLanguage: 'english', speech: true })} intervals={intervals} onDone={onDone} />)
+    await user.click(screen.getByRole('button', { name: /Speak/ }))
+    expect(await screen.findByText(/Heard:/)).toBeInTheDocument()
+    expect(screen.getByText(/Close: most words match/)).toBeInTheDocument()
+    expect(screen.getByTitle('missing')).toHaveTextContent('on')
+    await user.keyboard('{Enter}')
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ grade: 2, userAnswer: 'it depends how you define success' }))
+    vi.unstubAllGlobals()
+  })
+
   it('accepts a 1-letter typo on vocab as "almost" with Hard suggested', async () => {
     const user = userEvent.setup()
     const onDone = vi.fn()

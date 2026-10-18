@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cheatSheetFor, highlightSignals } from '../../domain/cheatsheets'
-import { checkAnswer, suggestedGrade, type CheckResult } from '../../domain/checker'
+import { checkAnswer, checkSpeech, suggestedGrade, type CheckResult, type SpeechCheck } from '../../domain/checker'
 import { acceptedTwin, detectTenses, guessPerson } from '../../domain/conjugator'
 import type { Prompt, Reveal as RevealInfo } from '../../domain/prompt'
 import { tenseLabel } from '../../domain/tags'
 import type { Grade, TenseName } from '../../domain/types'
-import { isTypingTarget, useCheatSheets } from '../hooks'
+import { isTypingTarget, useCheatSheets, useSettings } from '../hooks'
+import { speak, ttsSupported, useVoices } from '../speech'
+import { SpeakControl } from './SpeakControl'
 import { Diff } from './Diff'
 import { Button, Kbd } from './ui'
 
@@ -85,18 +87,50 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
   const [check, setCheck] = useState<CheckResult | null>(null)
   const [chosen, setChosen] = useState<number | null>(null)
   const [almostNote, setAlmostNote] = useState<string | null>(null)
+  /** Speak cards: what the recognizer heard (null until spoken), and whether the user switched to typing. */
+  const [heard, setHeard] = useState<SpeechCheck | null>(null)
+  const [typeInstead, setTypeInstead] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
+  const settings = useSettings()
+  const audioOn = useVoices().length > 0
+  const play = useCallback(() => speak(prompt.speak, { voiceURI: settings.ttsVoiceURI, rate: settings.ttsRate }), [prompt.speak, settings.ttsVoiceURI, settings.ttsRate])
+  const canPlay = audioOn && (revealed || !!prompt.audioPrompt)
 
   const suggested: Grade | null =
     prompt.kind === 'flip' ? null : prompt.kind === 'choice' ? (chosen === prompt.correctIndex ? 3 : 1) : check ? suggestedGrade(check.verdict) : null
 
+  // Audio that is the question itself (dictation, "listen then type") plays as the card appears.
+  // Browsers that require a user gesture (iOS) may block this; the Play button is always there.
+  useEffect(() => {
+    if (audioOn && prompt.audioPrompt && (prompt.kind !== 'flip' || settings.ttsAutoplay)) play()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per card
+  }, [audioOn])
+
   const reveal = useCallback(() => {
     answeredAt.current = Date.now()
     setRevealed(true)
-  }, [])
+    // Called from the click/key handler, so iOS allows the speech.
+    if (settings.ttsAutoplay && audioOn) play()
+  }, [settings.ttsAutoplay, audioOn, play])
+
+  const onHeard = (alternatives: string[]) => {
+    if (prompt.kind !== 'speak' || revealed) return
+    const result = checkSpeech(alternatives, prompt.target)
+    setHeard(result)
+    setCheck({ verdict: result.verdict, diff: result.diff, reference: prompt.target })
+    setAlmostNote(result.verdict === 'almost' ? 'Close: most words match' : null)
+    reveal()
+  }
 
   const submitTyped = () => {
+    if (prompt.kind === 'speak' && !revealed) {
+      const result = checkAnswer(text, [prompt.target], { typoTolerance: true })
+      setCheck(result)
+      setAlmostNote(result.verdict === 'almost' ? 'Almost: one-letter typo, accepted' : null)
+      reveal()
+      return
+    }
     if (prompt.kind !== 'typed' || revealed) return
     const result = checkAnswer(text, prompt.accepted, { typoTolerance: prompt.typoTolerance })
     const twin = result.verdict === 'wrong' && prompt.tenseInfo ? acceptedTwin(text, prompt.tenseInfo) : null
@@ -121,10 +155,18 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
 
   const finish = useCallback(
     (grade: Grade) => {
-      const userAnswer = prompt.kind === 'typed' ? text : prompt.kind === 'choice' && chosen !== null ? (prompt.options[chosen] ?? null) : null
+      const userAnswer =
+        prompt.kind === 'typed'
+          ? text
+          : prompt.kind === 'speak'
+            ? (heard?.transcript ?? text)
+            : prompt.kind === 'choice' && chosen !== null
+              ? (prompt.options[chosen] ?? null)
+              : null
+      if (ttsSupported()) speechSynthesis.cancel()
       onDone({ grade, correct: grade > 1, userAnswer, responseMs: (answeredAt.current ?? Date.now()) - started.current })
     },
-    [prompt, text, chosen, onDone],
+    [prompt, text, chosen, heard, onDone],
   )
 
   useEffect(() => {
@@ -134,6 +176,11 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e)) return
+      if (e.key.toLowerCase() === 'r' && canPlay) {
+        e.preventDefault()
+        play()
+        return
+      }
       if (!revealed) {
         if (prompt.kind === 'flip' && (e.key === ' ' || e.key === 'Enter')) {
           e.preventDefault()
@@ -154,24 +201,40 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [revealed, prompt, intervals, suggested, reveal, choose, finish])
+  }, [revealed, prompt, intervals, suggested, reveal, choose, finish, canPlay, play])
 
-  const verdict = prompt.kind === 'typed' ? check?.verdict : prompt.kind === 'choice' && chosen !== null ? (chosen === prompt.correctIndex ? 'correct' : 'wrong') : undefined
+  const verdict =
+    prompt.kind === 'typed' || prompt.kind === 'speak'
+      ? check?.verdict
+      : prompt.kind === 'choice' && chosen !== null
+        ? chosen === prompt.correctIndex
+          ? 'correct'
+          : 'wrong'
+        : undefined
 
   return (
     <div className="card outline-none" ref={panelRef} tabIndex={-1}>
-      <p className="muted mb-3 text-sm">{prompt.instruction}</p>
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <p className="muted text-sm">{prompt.instruction}</p>
+        {canPlay && (
+          <Button size="sm" variant={prompt.audioPrompt && !revealed ? 'primary' : 'ghost'} onClick={play} aria-label="Play audio (R)" title="Play audio (R)">
+            🔊 Play <Kbd>R</Kbd>
+          </Button>
+        )}
+      </div>
 
       {prompt.kind === 'flip' && (
         <div className="py-4 text-center">
-          <p className="text-3xl font-semibold">{prompt.front}</p>
+          <p className={`text-3xl font-semibold ${prompt.promptIsHebrew ? 'he' : ''}`} dir="auto">
+            {prompt.front}
+          </p>
           {prompt.frontSub && <p className="muted mt-1 text-sm italic">{prompt.frontSub}</p>}
         </div>
       )}
 
-      {prompt.prompt && (
+      {prompt.prompt && prompt.kind !== 'flip' && (
         <p
-          className={`mb-3 text-lg ${prompt.promptIsHebrew ? 'he text-xl' : ''} ${prompt.kind !== 'flip' && !prompt.context ? 'font-medium' : 'muted'}`}
+          className={`mb-3 text-lg ${prompt.promptIsHebrew ? 'he text-xl' : ''} ${prompt.context ? 'muted' : 'font-medium'}`}
           dir="auto"
         >
           {prompt.kind === 'typed' && prompt.instruction.startsWith('Complete the natural') ? <span className="muted">Your version: </span> : null}
@@ -257,6 +320,39 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
         </form>
       )}
 
+      {prompt.kind === 'speak' && !revealed && !typeInstead && <SpeakControl onHeard={onHeard} onTypeInstead={() => setTypeInstead(true)} />}
+      {prompt.kind === 'speak' && typeInstead && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            submitTyped()
+          }}
+        >
+          <textarea
+            className="input min-h-20"
+            value={text}
+            autoFocus
+            readOnly={revealed}
+            aria-label="Your answer"
+            spellCheck={false}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                submitTyped()
+              }
+            }}
+          />
+          {!revealed && (
+            <div className="mt-3 flex justify-end">
+              <Button variant="primary" type="submit">
+                Check
+              </Button>
+            </div>
+          )}
+        </form>
+      )}
+
       {prompt.kind === 'choice' && (
         <div className="grid gap-2">
           {prompt.options.map((opt, i) => {
@@ -294,7 +390,12 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
       {revealed && (
         <div className="mt-4 space-y-3 border-t border-slate-200 pt-4 dark:border-slate-800" aria-live="polite">
           {verdict && <VerdictLine verdict={verdict} almostNote={almostNote} />}
-          {prompt.kind === 'typed' && check && check.verdict !== 'correct' && (
+          {heard && (
+            <p className="text-sm">
+              <span className="muted">Heard: </span>“{heard.transcript}” <span className="muted">· {Math.round(heard.similarity * 100)}% match (approximate: speech recognition auto-corrects what it hears)</span>
+            </p>
+          )}
+          {(prompt.kind === 'typed' || prompt.kind === 'speak') && check && check.verdict !== 'correct' && (
             <div>
               <Diff ops={check.diff} />
             </div>
@@ -302,7 +403,11 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
           {prompt.kind === 'typed' && check?.verdict === 'wrong' && prompt.tenseInfo && (
             <TenseFeedback typed={text} info={prompt.tenseInfo} why={prompt.reveal.why} />
           )}
-          <RevealDetails reveal={prompt.reveal} kind={prompt.kind} showAnswer={prompt.kind === 'flip' || (prompt.kind === 'typed' && check?.verdict !== 'correct' && !prompt.context)} />
+          <RevealDetails
+            reveal={prompt.reveal}
+            kind={prompt.kind}
+            showAnswer={prompt.kind === 'flip' || ((prompt.kind === 'typed' || prompt.kind === 'speak') && check?.verdict !== 'correct' && !prompt.context)}
+          />
           {prompt.reveal.tense && <CheatSheetDetails tense={prompt.reveal.tense} />}
           <GradeBar intervals={intervals} suggested={suggested} onGrade={finish} />
         </div>

@@ -34,8 +34,13 @@ interface PromptBase {
   context?: Context
   hint?: string
   reveal: Reveal
-  /** Text to read aloud (Phase 4). */
+  /** Text to read aloud. */
   speak: string
+  /**
+   * The audio is (part of) the question, so it may play before the reveal (dictation, recognition of a
+   * shown term). Otherwise audio would give the answer away and is offered only after the reveal.
+   */
+  audioPrompt?: boolean
 }
 
 export interface FlipPrompt extends PromptBase {
@@ -59,7 +64,13 @@ export interface ChoicePrompt extends PromptBase {
   correctIndex: number
 }
 
-export type Prompt = FlipPrompt | TypedPrompt | ChoicePrompt
+/** Say the target sentence aloud; checked with speech recognition. */
+export interface SpeakPrompt extends PromptBase {
+  kind: 'speak'
+  target: string
+}
+
+export type Prompt = FlipPrompt | TypedPrompt | ChoicePrompt | SpeakPrompt
 
 /** Split a sentence around a token chunk, moving edge punctuation out of the answer. */
 export function blankChunk(text: string, chunk: Chunk): { context: Context; answer: string } {
@@ -84,6 +95,10 @@ function firstLetters(text: string): string {
 
 export interface PromptOptions {
   promptLanguage: Settings['promptLanguage']
+  /** Text-to-speech with an English voice is available. */
+  audio?: boolean
+  /** Speech recognition is available. */
+  speech?: boolean
 }
 
 export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt {
@@ -117,7 +132,20 @@ export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt
           }
         }
       }
-      if (t === 'produce' || t === 'cloze-use') {
+      if (t === 'dictation' && opts.audio) {
+        return {
+          kind: 'typed',
+          instruction: 'Listen and type what you hear',
+          accepted: [f.term],
+          typoTolerance: true,
+          multiline: false,
+          reveal,
+          speak: f.term,
+          audioPrompt: true,
+        }
+      }
+      // Without audio, dictation (and cloze-use without a usable example) falls back to production.
+      if (t === 'produce' || t === 'cloze-use' || t === 'dictation') {
         const hebrew = opts.promptLanguage === 'hebrew' && !!f.he
         return {
           kind: 'typed',
@@ -139,6 +167,7 @@ export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt
         ...(f.pos ? { frontSub: f.pos } : {}),
         reveal,
         speak: f.term,
+        audioPrompt: true,
       }
     }
 
@@ -146,15 +175,25 @@ export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt
       const f = note.fields
       const plain = clozePlain(f.text)
       const reveal: Reveal = { answer: plain, full: plain, ...(f.he ? { he: f.he } : {}), ...(f.notes ? { notes: f.notes } : {}) }
+      // Prompt for full recall: the Hebrew gloss if there is one, otherwise audio, otherwise first letters.
+      const cue = f.he
+        ? { instruction: 'Say it in English, then type it', prompt: f.he, promptIsHebrew: true }
+        : opts.audio
+          ? { instruction: 'Listen, then type the sentence', audioPrompt: true }
+          : { instruction: 'Recall the sentence from its first letters', prompt: firstLetters(plain) }
       if (t === 'recall-full') {
+        return { kind: 'typed', ...cue, accepted: [plain], typoTolerance: true, multiline: true, reveal, speak: plain }
+      }
+      if (t === 'speak') {
+        const instruction = f.he ? 'Say it in English' : opts.audio ? 'Listen, then say it back' : 'Say the sentence from its first letters'
+        if (opts.speech) return { kind: 'speak', ...cue, instruction, target: plain, reveal, speak: plain }
+        // No speech recognition: say it aloud, reveal, grade yourself.
         return {
-          kind: 'typed',
-          instruction: f.he ? 'Say it in English, then type it' : 'Recall the sentence from its first letters',
-          prompt: f.he ?? firstLetters(plain),
-          promptIsHebrew: !!f.he,
-          accepted: [plain],
-          typoTolerance: true,
-          multiline: true,
+          kind: 'flip',
+          instruction: `${instruction} (out loud), then check`,
+          front: cue.prompt ?? '🔊',
+          promptIsHebrew: !!cue.promptIsHebrew,
+          ...(cue.audioPrompt ? { audioPrompt: true } : {}),
           reveal,
           speak: plain,
         }

@@ -14,6 +14,7 @@ import { StudyCard, type CardAnswer } from '../components/StudyCard'
 import { Banner, Button, Empty, Kbd, TagList, TypeBadge } from '../components/ui'
 import { formatDuration, pct } from '../format'
 import { isTypingTarget, useCheatSheets, useSettings } from '../hooks'
+import { speechRecognitionSupported, useVoices } from '../speech'
 
 export type SessionSource =
   | { kind: 'daily' }
@@ -54,6 +55,7 @@ const REQUEUE_GAP = 3
 export function StudySession({ source }: { source: SessionSource }) {
   const settings = useSettings()
   const cheatSheets = useCheatSheets()
+  const audioOn = useVoices().length > 0
   const signals = useMemo(() => (source.kind === 'drill' && source.highlight ? allSignals(cheatSheets) : undefined), [source, cheatSheets])
   const [state, setState] = useState<State | null>(null)
   const [busy, setBusy] = useState(false)
@@ -103,10 +105,10 @@ export function StudySession({ source }: { source: SessionSource }) {
   const finished = !!state && (!card || !note || capReached)
 
   const prompt = useMemo(
-    () => (card && note ? buildPrompt(note, card, { promptLanguage: settings.promptLanguage }) : null),
+    () => (card && note ? buildPrompt(note, card, { promptLanguage: settings.promptLanguage, audio: audioOn, speech: speechRecognitionSupported() }) : null),
     // Rebuild when the card's review count changes (chunk rotation) or after an edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [card?.id, card?.fsrs.reps, note, settings.promptLanguage, state?.attempt],
+    [card?.id, card?.fsrs.reps, note, settings.promptLanguage, state?.attempt, audioOn],
   )
 
   const intervals = useMemo(() => {
