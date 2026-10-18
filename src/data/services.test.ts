@@ -4,7 +4,18 @@ import { parseImport } from '../domain/parser'
 import { exportBackup, importBackup } from './backup'
 import { createDexieRepos, FluencyDB, SCHEMA_VERSION } from './dexie'
 import type { Repos } from './repos'
-import { createNote, importPackage, readinessFor, reviewCard, trashNotes, undoLastReview, updateNote, initialize, restoreNotes } from './services'
+import {
+  createNote,
+  importPackage,
+  initialize,
+  markForRelearn,
+  readinessFor,
+  restoreNotes,
+  reviewCard,
+  trashNotes,
+  undoLastReview,
+  updateNote,
+} from './services'
 
 let n = 0
 let db: FluencyDB
@@ -80,6 +91,14 @@ describe('reviews', () => {
     }
     expect(c.fsrs.lapses).toBe(6)
     expect(c.leech).toBe(true)
+    await updateNote(repos, note.id, { type: 'sentence', fields: { text: 'It depends on you.', notes: 'hook' } }, [], t)
+    expect((await repos.cards.get(card!.id))!.leech).toBe(false)
+  })
+
+  it('re-flags a cleared leech every 4 lapses after the 6th', async () => {
+    const { isLeechLapse } = await import('./services')
+    expect([5, 6, 7, 9, 10, 14].map((n) => isLeechLapse(n - 1, n))).toEqual([false, true, false, false, true, true])
+    expect(isLeechLapse(6, 6)).toBe(false)
   })
 
   it('drill: only the first answer of the day reschedules; a later miss still lapses', async () => {
@@ -105,6 +124,19 @@ it('editing a note keeps scheduling unless the card content changed', async () =
   expect((await repos.cards.get(recog.id))!.fsrs.reps).toBe(1)
   await updateNote(repos, note.id, { type: 'vocab', fields: { term: 'hedge', definition: 'to reduce risk', examples: ['Firms hedge risk.'] } }, ['x'], NOW + 2)
   expect((await repos.cards.get(recog.id))!.fsrs.reps).toBe(0)
+})
+
+it('quiz misses: a locked card maps to the most advanced unlocked sibling, made due now and prioritized', async () => {
+  const note = await createNote(repos, { type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } }, [], null, NOW)
+  const cards = (await repos.cards.byNote(note.id)).sort((a, b) => a.order - b.order)
+  const first = (await reviewCard(repos, { cardId: cards[0]!.id, grade: 4, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })).card
+  await undoLastReview(repos) // keep the second card locked
+  await repos.cards.put(first)
+  await markForRelearn(repos, [cards[1]!.id], true, NOW + 1000)
+  const after = await repos.cards.get(cards[0]!.id)
+  expect(after!.fsrs.due).toBe(NOW + 1000)
+  expect(after!.priority).toBe(true)
+  expect((await repos.cards.get(cards[1]!.id))!.unlocked).toBe(false)
 })
 
 it('trash and restore', async () => {

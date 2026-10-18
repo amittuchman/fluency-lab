@@ -74,6 +74,9 @@ export async function updateNote(repos: Repos, noteId: string, content: NoteCont
     if (!cur) throw new Error('Note not found')
     const next = { ...cur, ...content, tags: uniq(tags), updatedAt: now } as Note
     await repos.notes.put(next)
+    // Editing is how a leech gets fixed: clear the flag (it comes back after 4 more lapses).
+    const leeches = (await repos.cards.byNote(noteId)).filter((c) => c.leech)
+    if (leeches.length) await repos.cards.bulkPut(leeches.map((c) => ({ ...c, leech: false })))
     await syncCards(repos, next, settings, now)
     return next
   })
@@ -192,6 +195,11 @@ export async function purgeNotes(repos: Repos, ids: string[]): Promise<void> {
 
 // ---------- reviews ----------
 
+/** A lapse flags a leech at 6 lapses, then again every 4 more (after the user cleared it by editing). */
+export function isLeechLapse(before: number, after: number): boolean {
+  return after > before && after >= LEECH_LAPSES && (after - LEECH_LAPSES) % 4 === 0
+}
+
 export interface ReviewInput {
   cardId: string
   grade: Grade
@@ -231,7 +239,7 @@ export async function reviewCard(repos: Repos, input: ReviewInput): Promise<Revi
       }
     }
     const fsrs = scheduled ? scheduler.review(card.fsrs, grade, now) : card.fsrs
-    const updated: Card = { ...card, fsrs, leech: card.leech || fsrs.lapses >= LEECH_LAPSES, priority: false }
+    const updated: Card = { ...card, fsrs, leech: card.leech || isLeechLapse(card.fsrs.lapses, fsrs.lapses), priority: false }
 
     const siblings = (await repos.cards.byNote(card.noteId)).filter((c) => c.id !== card.id)
     const end = dayEnd(now, settings.rolloverHour)
@@ -283,14 +291,25 @@ export async function undoLastReview(repos: Repos): Promise<ReviewLog | null> {
   })
 }
 
-/** Quiz misses: due now; optionally flagged to lead the next session. */
+/**
+ * Quiz misses: make the note due now; optionally flag it to lead the next session. A quiz can use a
+ * template that is still locked; then the note's most advanced unlocked card is marked instead.
+ */
 export async function markForRelearn(repos: Repos, cardIds: string[], front: boolean, now = Date.now()): Promise<void> {
-  const cards = await repos.cards.getMany(cardIds)
+  const missed = await repos.cards.getMany(cardIds)
+  const targets = new Map<string, Card>()
+  for (const c of missed) {
+    let target: Card | undefined = c
+    if (!c.unlocked) {
+      const siblings = (await repos.cards.byNote(c.noteId)).filter((s) => s.unlocked && !s.suspended)
+      target = siblings.sort((a, b) => b.order - a.order)[0]
+    }
+    if (target) targets.set(target.id, target)
+  }
   await repos.cards.bulkPut(
-    cards.map((c) => ({
+    [...targets.values()].map((c) => ({
       ...c,
       fsrs: c.fsrs.state === 0 ? c.fsrs : { ...c.fsrs, due: Math.min(c.fsrs.due, now) },
-      unlocked: true,
       buriedUntil: null,
       priority: front || c.priority,
     })),

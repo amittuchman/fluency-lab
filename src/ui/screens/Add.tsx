@@ -327,6 +327,7 @@ function QuickAdd() {
   const [tags, setTags] = useState('')
   const [packageId, setPackageId] = useState('')
   const [added, setAdded] = useState<string | null>(null)
+  const [count, setCount] = useState(0)
   const packages = useRepoQuery(() => repos.packages.all(), [])
   const clean = cleanContent(content)
   const errors = validateContent(clean).errors
@@ -358,6 +359,7 @@ function QuickAdd() {
     await createNote(repos, clean, parseTags(tags), packageId || null)
     setAdded(`Added ${clean.type} · ${previews.length} cards`)
     setContent(emptyContent(content.type))
+    setCount((n) => n + 1) // remount the fields so focus returns to the first one
   }
 
   return (
@@ -375,7 +377,7 @@ function QuickAdd() {
           }
         }}
       >
-        <NoteFields content={content} onChange={setContent} typeEditable />
+        <NoteFields key={count} content={content} onChange={setContent} typeEditable />
         <TagsField value={tags} onChange={setTags} />
         <label className="block">
           <span className="label">Package</span>
@@ -415,7 +417,7 @@ function QuickAdd() {
                   : (prompt.prompt ?? '')}
             </p>
             {prompt.kind === 'choice' && <p className="muted mt-1 text-xs">Options: {prompt.options.join(' / ')}</p>}
-            <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">→ {prompt.reveal.answer}</p>
+            <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">→ {prompt.kind === 'flip' ? prompt.reveal.definition : prompt.reveal.answer}</p>
           </div>
         ))}
       </div>

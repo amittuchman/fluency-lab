@@ -65,3 +65,21 @@ Non-obvious choices, newest last. Each entry: what, and why.
 26. **Ready = the last two answers to a card (any mode) were correct.** Stateless, computed from logs, so the
     home widget and the drill agree. A wrong answer resets the streak.
 27. **The drill's card set is fixed when it starts.** Templates unlocked during the drill go to normal SRS.
+28. **Drill order rotates across note types**, like new cards in the daily queue.
+29. **"Drill again" (`?all=1`)** re-drills every card when the whole package is already ready.
+
+## Quiz, leeches, weak spots (Phase 2)
+
+30. **Quiz questions may use any auto-checkable template of a note, locked or not.** A quiz measures what
+    you can produce, independent of where the card is in its unlock chain. `recog` (self-graded) is never used.
+31. **Quiz misses go to the note's most advanced unlocked card** (due now). If the missed template is still
+    locked, it stays locked: the quiz does not skip the unlock chain. "Put misses at the front" also sets a
+    `priority` flag that puts those cards first in the next daily session (cleared after one review).
+32. **Quiz timer is a total time limit.** When it runs out, the quiz ends; the score counts answered questions.
+33. **Weak items** (quiz source) = notes with lapses or misses in the last 30 days, weakest first.
+34. **Saving an edit clears a note's leech flags**; a card re-flags at 6 lapses and then every 4 more
+    (10, 14, …), like Anki. Without this, a fixed leech would carry the flag forever.
+35. **Weak Spots ranks tags by 30-day accuracy**, then by current lapses. "Drill this tag" uses the same
+    mastery loop as the package drill.
+36. **Stats "tense mastery"** = average over the tense's cards of min(1, stability / 21 days): it rises steadily
+    with practice and reaches 100% when every card is mature.

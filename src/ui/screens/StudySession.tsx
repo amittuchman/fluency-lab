@@ -4,7 +4,7 @@ import { repos } from '../../data'
 import { reviewCard, setCardSuspended, undoLastReview } from '../../data/services'
 import { answerDrill, startDrill, undoDrill, type DrillState } from '../../domain/drill'
 import { buildPrompt } from '../../domain/prompt'
-import { buildDailyQueue } from '../../domain/queue'
+import { buildDailyQueue, roundRobin } from '../../domain/queue'
 import { dayEnd, dayStart, formatInterval, Scheduler } from '../../domain/scheduler'
 import { templateLabel } from '../../domain/templates'
 import type { Card, Grade, Note } from '../../domain/types'
@@ -62,8 +62,10 @@ export function StudySession({ source }: { source: SessionSource }) {
         queue = buildDailyQueue({ cards, notes: noteMap, todayLogs, settings, now }).queue.map((c) => c.id)
         if (settings.sessionCap.kind === 'cards') queue = queue.slice(0, settings.sessionCap.value)
       } else {
+        const ids = source.cardIds.filter((id) => cardMap.has(id) && noteMap.has(cardMap.get(id)!.noteId))
+        // Rotate across note types so the loop is interleaved, not blocked by type.
         drill = startDrill(
-          source.cardIds.filter((id) => cardMap.has(id)),
+          roundRobin(ids, (id) => noteMap.get(cardMap.get(id)!.noteId)!.type),
           source.readyIds,
         )
         queue = drill.queue

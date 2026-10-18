@@ -11,10 +11,14 @@ import { Drill } from './screens/Drill'
 import { FormatHelp } from './screens/FormatHelp'
 import { Home } from './screens/Home'
 import { Library } from './screens/Library'
+import { Leeches } from './screens/Leeches'
 import { Packages } from './screens/Packages'
+import { Quiz } from './screens/Quiz'
 import { Settings } from './screens/Settings'
+import { Stats } from './screens/Stats'
 import { StudySession } from './screens/StudySession'
 import { Trash } from './screens/Trash'
+import { WeakSpots } from './screens/WeakSpots'
 
 const NAV: Array<{ to: string; label: string; mobile?: boolean }> = [
   { to: '/', label: 'Home', mobile: true },
@@ -22,6 +26,10 @@ const NAV: Array<{ to: string; label: string; mobile?: boolean }> = [
   { to: '/add', label: 'Add', mobile: true },
   { to: '/library', label: 'Library', mobile: true },
   { to: '/packages', label: 'Packages' },
+  { to: '/quiz', label: 'Quiz' },
+  { to: '/weak', label: 'Weak spots' },
+  { to: '/stats', label: 'Stats' },
+  { to: '/leeches', label: 'Leeches' },
   { to: '/settings', label: 'Settings' },
   { to: '/trash', label: 'Trash' },
 ]
@@ -74,6 +82,10 @@ export function App() {
             <Route path="/help/format" element={<FormatHelp />} />
             <Route path="/library" element={<Library />} />
             <Route path="/packages" element={<Packages />} />
+            <Route path="/quiz" element={<Quiz />} />
+            <Route path="/weak" element={<WeakSpots />} />
+            <Route path="/stats" element={<Stats />} />
+            <Route path="/leeches" element={<Leeches />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/trash" element={<Trash />} />
             <Route path="*" element={<Empty title="Page not found." />} />

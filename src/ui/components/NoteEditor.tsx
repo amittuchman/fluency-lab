@@ -24,6 +24,8 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
 export function NoteFields({ content, onChange, typeEditable }: Props) {
   const set = (patch: Record<string, unknown>) => onChange({ ...content, fields: { ...content.fields, ...patch } } as NoteContent)
   const v = validateContent(content)
+  // Don't nag about missing fields before anything has been typed.
+  const pristine = Object.entries(content.fields).every(([k, val]) => k === 'tense' || (Array.isArray(val) ? val.join('') : String(val ?? '')).trim() === '')
 
   return (
     <div className="space-y-3">
@@ -143,7 +145,7 @@ export function NoteFields({ content, onChange, typeEditable }: Props) {
         </Field>
       )}
 
-      {(v.errors.length > 0 || v.warnings.length > 0) && (
+      {!pristine && (v.errors.length > 0 || v.warnings.length > 0) && (
         <ul className="space-y-0.5 text-sm">
           {v.errors.map((m) => (
             <li key={m} className="text-rose-700 dark:text-rose-300">

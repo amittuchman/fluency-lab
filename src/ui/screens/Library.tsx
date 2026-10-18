@@ -133,8 +133,8 @@ export function Library() {
         </span>
       </PageHeader>
 
-      <div className="card mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        <input className="input lg:col-span-1" placeholder="Search…" value={q} onChange={(e) => setParam('q', e.target.value)} aria-label="Search" />
+      <div className="card mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
+        <input className="input col-span-2 lg:col-span-1" placeholder="Search…" value={q} onChange={(e) => setParam('q', e.target.value)} aria-label="Search" />
         <select className="input" value={type} onChange={(e) => setParam('type', e.target.value)} aria-label="Type">
           <option value="">All types</option>
           {NOTE_TYPES.map((t) => (
