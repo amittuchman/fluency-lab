@@ -293,7 +293,8 @@ export async function undoLastReview(repos: Repos): Promise<ReviewLog | null> {
     }))
     const current = await repos.cards.get(log.cardId)
     // resetAt marks this as a newer state than the review it undoes, so sync doesn't bring the review back.
-    if (current) await repos.cards.put({ ...log.cardBefore, resetAt: Date.now() })
+    // Always after that review's own time, even if the clock moved backwards since.
+    if (current) await repos.cards.put({ ...log.cardBefore, resetAt: Math.max(Date.now(), log.timestamp + 1) })
     await repos.cards.bulkPut(reverted)
     await repos.logs.delete(log.id)
     return log

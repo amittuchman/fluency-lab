@@ -165,7 +165,8 @@ describe('sync between two devices', () => {
     const keep = await createNote(a.repos, vocab('keep'), [], null)
     const gone = await createNote(a.repos, vocab('gone'), [], null)
     const card = await firstCard(a, keep)
-    await reviewCard(a.repos, { cardId: card.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: T0 + 5_000 })
+    // Timestamped well in the future on purpose: an undo must still win (a clock can move backwards).
+    await reviewCard(a.repos, { cardId: card.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: Date.now() + 3_600_000 })
     await a.engine.sync()
     await b.engine.sync()
     expect(await b.repos.logs.all()).toHaveLength(1)
