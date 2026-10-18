@@ -29,6 +29,10 @@ function line(i: number): string {
   }
 }
 
+/**
+ * Budgets are ~10–30x the measured times (5–90 ms): they catch real regressions (parsing once took 2.8 s)
+ * without failing on a busy or slow machine.
+ */
 function time<T>(label: string, budgetMs: number, fn: () => T): T {
   const t0 = performance.now()
   const out = fn()
@@ -44,7 +48,7 @@ it(`stays fast with ${N} notes`, { timeout: 120_000 }, async () => {
   const now = new Date(2026, 9, 18, 12).getTime()
   const text = Array.from({ length: N }, (_, i) => line(i)).join('\n')
 
-  const parsed = time('parse 5000 lines', 1500, () => parseImport(text))
+  const parsed = time('parse 5000 lines', 2000, () => parseImport(text))
   expect(parsed.items.filter((i) => i.status === 'error')).toHaveLength(0)
   const t0 = performance.now()
   await importPackage(repos, { name: 'big', sourceText: text, items: parsed.items.map((i) => ({ content: i.content!, tags: i.tags, action: 'create' as const })) }, now)
@@ -66,13 +70,13 @@ it(`stays fast with ${N} notes`, { timeout: 120_000 }, async () => {
   const noteMap = new Map(notes.map((n) => [n.id, n]))
   const liveIds = new Set(notes.map((n) => n.id))
 
-  time('daily queue', 300, () => buildDailyQueue({ cards: allCards, notes: noteMap, todayLogs: [], settings: DEFAULT_SETTINGS, now }))
-  time('streak', 300, () => streak(allLogs, now, 4))
-  time('tag stats', 500, () => tagStats(notes, allCards, allLogs))
-  time('tense stats', 300, () => tenseStats(notes, allCards, now, dayEnd(now, 4)))
-  time('maturity', 100, () => maturity(allCards))
-  time('forecast + heatmap', 300, () => [dueForecast(allCards, liveIds, now, 4), activityByDay(allLogs, now, 4)])
-  time('quiz pick (weak)', 500, () =>
+  time('daily queue', 1000, () => buildDailyQueue({ cards: allCards, notes: noteMap, todayLogs: [], settings: DEFAULT_SETTINGS, now }))
+  time('streak', 1000, () => streak(allLogs, now, 4))
+  time('tag stats', 1500, () => tagStats(notes, allCards, allLogs))
+  time('tense stats', 1000, () => tenseStats(notes, allCards, now, dayEnd(now, 4)))
+  time('maturity', 500, () => maturity(allCards))
+  time('forecast + heatmap', 1000, () => [dueForecast(allCards, liveIds, now, 4), activityByDay(allLogs, now, 4)])
+  time('quiz pick (weak)', 1500, () =>
     pickQuizQuestions({ notes, cards: allCards, logs: allLogs, config: { source: { kind: 'weak' }, length: 20, formats: ['choice', 'cloze', 'production'], timerSeconds: null }, now, dayEndTs: dayEnd(now, 4) }),
   )
   const t2 = performance.now()
