@@ -176,7 +176,7 @@ Non-obvious choices, newest last. Each entry: what, and why.
 68. **New card ids are deterministic** (`noteId:template`), so two devices that create a note's cards on their own
     (template migrations) produce the same ids. Older random-id twins are collapsed on pull: the version with the
     latest review wins and the other is deleted everywhere.
-69. **Email OTP (6-digit code), not a magic link**: the installed PWA has separate storage from the browser, so a
+69. *(Superseded by 76.)* **Email OTP (6-digit code), not a magic link**: the installed PWA has separate storage from the browser, so a
     link would sign in the wrong one. The session is persisted in localStorage (`fluency-lab-auth`) and refreshed
     automatically. Sign-out is per device and keeps local data.
 70. **supabase-js loads lazily** (only when a saved session exists or the user signs in): local-only users don't
@@ -193,5 +193,26 @@ Non-obvious choices, newest last. Each entry: what, and why.
     devices syncing through it (first-login union, last-write-wins both orders, latest-review-wins for cards,
     offline then online, duplicate pushes, Trash / permanent delete / undo, edit resets, twin cards, account
     isolation, incremental pulls).
-75. **Supabase sign-in is tested by the user, not by me**: signing in to a remote service with the user's email
-    code is something only the user should do. Everything below sign-in is covered by the tests above.
+75. **Supabase sign-in is tested by the user, not by me**: signing in to a remote service with the user's
+    credentials is something only the user should do. Everything below sign-in is covered by the tests above.
+
+## Sign-in without email templates
+
+76. **Email + password instead of an emailed code.** The Supabase free plan can't edit email templates (that needs
+    custom SMTP), so the sign-in email would carry the default magic link, not a 6-digit code. Parsing that email
+    is fragile on Android: the link holds a long hashed token, tapping it uses the token up in whichever app opens
+    it (often Chrome, not the installed PWA, whose storage is separate), and mail scanners may open it first.
+    Password sign-in needs no email at all, works the same in the browser and the PWA, and Android's password
+    manager can fill it in. Requires **Confirm email** off in Supabase.
+77. **Create account and Sign in are separate buttons**, so a typo in the email can't silently create a second
+    account. If Supabase still has "Confirm email" on, sign-up returns no session and the app says exactly which
+    setting to change. Passwords need 8+ characters, typed twice when creating or changing.
+78. **Hardening without email verification:** recommend turning off "Allow new users to sign up" once the account
+    exists. Even with it on, a stranger's account could never read or write another account's rows (RLS).
+79. **Forgot password uses Supabase's default reset email** (no template edit needed) with the PKCE flow: the link
+    returns as `?code=…` (a query parameter, so it can't clash with the app's hash routes), is exchanged where it
+    was requested, and opens "Choose a new password". If it's opened elsewhere, the app explains why it failed.
+    Last resort is safe by design: every device keeps a full local copy, so a new account plus a sign-in merges
+    everything back.
+80. **"Secure password change" must stay off** in Supabase; otherwise changing a password would require an emailed
+    code again.

@@ -82,8 +82,15 @@ and restore on the other.
 
 ## Sync between devices (optional)
 
-**Settings → Sync between devices**: type your email, then the 6-digit code from the email. Do the same on
-each device (the installed phone app has its own storage, which is why it's a code and not a link).
+**Settings → Sync between devices**: on the first device choose **Create account** (email + a password of 8+
+characters); on every other device, including the installed phone app, use **Sign in** with the same email and
+password. No email is involved, so it works the same in the browser and in the installed app (which has its own
+storage). **Change password** is under the same section once signed in.
+
+Forgot the password? **Sign in → Forgot password?** emails a reset link (Supabase's standard email). Open the link
+on the *same* device and in the *same* browser or app where you asked for it (easiest: do it on the laptop); it
+opens Fluency Lab with "Choose a new password". If that's ever impossible, nothing is lost: every device keeps a
+full copy, so you can create a new account and sign in to it, and the data is merged into it.
 
 - The device's own database stays the source of truth; sync copies changes both ways in the background: on
   start, when the connection returns, when the app comes back to the foreground, after every session and quiz,
@@ -101,10 +108,16 @@ each device (the installed phone app has its own storage, which is why it's a co
 1. **SQL Editor → New query**, paste [`supabase/schema.sql`](supabase/schema.sql), **Run**. It creates the six
    tables (`notes`, `cards`, `review_logs`, `packages`, `quiz_results`, `settings`) with Row Level Security:
    each user can read and write only their own rows, anonymous visitors nothing, and rows can't be hard-deleted.
-2. **Authentication → Emails (Templates)**: in both **Magic Link** and **Confirm signup**, show the code
-   (`{{ .Token }}`) instead of the link.
+2. **Authentication → Sign In / Providers → Email**: keep **Enable Email provider** on, turn **Confirm email** off,
+   leave **Secure password change** off, **Save**. (No email templates need changing: the free plan can't, and
+   password sign-in doesn't send email.)
 3. **Authentication → URL Configuration**: Site URL `https://amittuchman.github.io/fluency-lab/`; redirect URLs
-   `https://amittuchman.github.io/fluency-lab/**`, `http://localhost:5173/**`, `http://localhost:4173/**`.
+   `https://amittuchman.github.io/fluency-lab/**`, `http://localhost:5173/**`, `http://localhost:4173/**`
+   (used only by the password-reset link).
+4. Recommended, after you have created your account: **Authentication → Sign In / Providers**, turn off
+   **Allow new users to sign up**, **Save**. Signing in keeps working; nobody else can create accounts.
+   (Without email confirmation anyone could otherwise register an account. They could never see your data,
+   because Row Level Security limits each account to its own rows.)
 
 The app uses only the project URL and the **publishable** key (`src/sync/config.ts`, overridable with
 `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`). These are public by design; Row Level Security protects

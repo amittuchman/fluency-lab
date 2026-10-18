@@ -9,6 +9,7 @@ import type { Settings as SettingsT } from '../domain/types'
 import { startSync } from '../sync/manager'
 import { ShortcutsOverlay } from './components/Shortcuts'
 import { SyncBadge } from './components/SyncBadge'
+import { PasswordRecoveryDialog } from './components/SyncSettings'
 import { Empty, Kbd } from './components/ui'
 import { CheatSheetContext, openShortcuts, SettingsContext } from './hooks'
 import { speechRecognitionSupported } from './speech'
@@ -163,6 +164,7 @@ function Layout({ children }: { children: ReactNode }) {
         <Suspense fallback={<p className="muted">Loading…</p>}>{children}</Suspense>
       </main>
       <ShortcutsOverlay />
+      <PasswordRecoveryDialog />
 
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden dark:border-slate-800 dark:bg-slate-950/95"

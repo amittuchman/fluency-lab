@@ -2,6 +2,7 @@ import type { SupabaseClient, User } from '@supabase/supabase-js'
 import { useSyncExternalStore } from 'react'
 import { db } from '../data'
 import { onLocalChange } from '../data/changes'
+import { authMessage } from './authMessages'
 import { AUTH_STORAGE_KEY, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from './config'
 import { SyncEngine } from './engine'
 import { SupabaseRemote, SyncError } from './supabaseRemote'
@@ -18,13 +19,17 @@ export interface SyncState {
   email: string | null
   lastSyncedAt: number | null
   error: string | null
+  /** Opened from a password-reset link: the user should choose a new password now. */
+  recovery: boolean
 }
+
+export const MIN_PASSWORD_LENGTH = 8
 
 const PERIODIC_MS = 5 * 60_000
 const AFTER_CHANGE_MS = 20_000
 const VISIBLE_AGAIN_MS = 60_000
 
-let state: SyncState = { status: 'local', email: null, lastSyncedAt: null, error: null }
+let state: SyncState = { status: 'local', email: null, lastSyncedAt: null, error: null, recovery: false }
 const listeners = new Set<() => void>()
 function set(patch: Partial<SyncState>) {
   state = { ...state, ...patch }
@@ -49,11 +54,20 @@ async function getClient(): Promise<SupabaseClient> {
   if (client) return client
   const { createClient } = await import('@supabase/supabase-js')
   client = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: { storageKey: AUTH_STORAGE_KEY, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+    auth: {
+      storageKey: AUTH_STORAGE_KEY,
+      persistSession: true,
+      autoRefreshToken: true,
+      // PKCE: a password-reset link comes back as ?code=… (query, not hash, so it can't clash with the
+      // app's hash routes) and is exchanged for a session here.
+      flowType: 'pkce',
+      detectSessionInUrl: true,
+    },
   })
   client.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') signedOut()
-    else if (session?.user && session.user.id !== user?.id) void signedIn(session.user)
+    else if (event === 'PASSWORD_RECOVERY') set({ recovery: true })
+    if (session?.user && event !== 'SIGNED_OUT') void signedIn(session.user)
   })
   return client
 }
@@ -66,7 +80,17 @@ function hasStoredSession(): boolean {
   }
 }
 
+/** A password-reset link landed here (?code=…). */
+function authCodeInUrl(): boolean {
+  return new URLSearchParams(location.search).has('code')
+}
+
+function clearAuthCodeFromUrl() {
+  history.replaceState(null, '', location.pathname + location.hash)
+}
+
 async function signedIn(u: User) {
+  if (user?.id === u.id) return
   user = u
   const last = await new SyncEngine(db, new SupabaseRemote(client!, u.id), u.id).lastSyncedAt()
   set({ email: u.email ?? null, lastSyncedAt: last, status: navigator.onLine ? 'synced' : 'offline', error: null })
@@ -75,7 +99,7 @@ async function signedIn(u: User) {
 
 function signedOut() {
   user = null
-  set({ status: 'local', email: null, lastSyncedAt: null, error: null })
+  set({ status: 'local', email: null, lastSyncedAt: null, error: null, recovery: false })
 }
 
 let started = false
@@ -96,9 +120,15 @@ export async function startSync(): Promise<void> {
     clearTimeout(changeTimer)
     changeTimer = setTimeout(() => void syncNow(), AFTER_CHANGE_MS)
   })
-  if (!hasStoredSession()) return
+  const fromResetLink = authCodeInUrl()
+  if (!hasStoredSession() && !fromResetLink) return
   const c = await getClient()
   const { data } = await c.auth.getSession()
+  if (fromResetLink) {
+    clearAuthCodeFromUrl()
+    // The link can only be used where the reset was requested (PKCE keeps a secret there).
+    if (!data.session) set({ error: 'This password-reset link has to be opened in the same browser (or installed app) where you asked for it, within an hour. Ask for a new one there.' })
+  }
   if (data.session?.user) await signedIn(data.session.user)
 }
 
@@ -135,19 +165,45 @@ export function syncNow(): Promise<void> {
   return running
 }
 
-/** Email a 6-digit sign-in code (creates the account on first use). */
-export async function sendCode(email: string): Promise<void> {
+/** Sign in; the session is saved on this device and the first sync (a merge) starts. */
+export async function signInWithPassword(email: string, password: string): Promise<void> {
   const c = await getClient()
-  const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true } })
-  if (error) throw new Error(error.message)
+  const { data, error } = await c.auth.signInWithPassword({ email: email.trim(), password })
+  if (error) throw new Error(authMessage(error.message))
+  await signedIn(data.user)
 }
 
-/** Check the code; on success the session is saved and the first sync (a merge) starts. */
-export async function verifyCode(email: string, code: string): Promise<void> {
+/**
+ * Create the account (once, on the first device). With "Confirm email" turned off in Supabase this signs
+ * in right away; if it is still on, Supabase sends a confirmation email instead and there is no session yet.
+ */
+export async function createAccount(email: string, password: string): Promise<'signed-in' | 'confirmation-required'> {
+  if (password.length < MIN_PASSWORD_LENGTH) throw new Error(`Use at least ${MIN_PASSWORD_LENGTH} characters.`)
   const c = await getClient()
-  const { data, error } = await c.auth.verifyOtp({ email, token: code.trim(), type: 'email' })
-  if (error) throw new Error(error.message)
-  if (data.user) await signedIn(data.user)
+  const { data, error } = await c.auth.signUp({ email: email.trim(), password })
+  if (error) throw new Error(authMessage(error.message))
+  if (!data.session || !data.user) return 'confirmation-required'
+  await signedIn(data.user)
+  return 'signed-in'
+}
+
+/** Set a new password (while signed in, or after opening a reset link). */
+export async function changePassword(password: string): Promise<void> {
+  if (password.length < MIN_PASSWORD_LENGTH) throw new Error(`Use at least ${MIN_PASSWORD_LENGTH} characters.`)
+  const c = await getClient()
+  const { error } = await c.auth.updateUser({ password })
+  if (error) throw new Error(authMessage(error.message))
+  set({ recovery: false, error: null })
+}
+
+/**
+ * Forgotten password: Supabase emails a reset link (its default email; no template changes needed). The link
+ * must be opened where it was requested: it comes back here as ?code=… and opens "choose a new password".
+ */
+export async function sendPasswordReset(email: string): Promise<void> {
+  const c = await getClient()
+  const { error } = await c.auth.resetPasswordForEmail(email.trim(), { redirectTo: location.origin + location.pathname })
+  if (error) throw new Error(authMessage(error.message))
 }
 
 /** Sign out on this device only. Local data stays; it keeps working local-only. */
