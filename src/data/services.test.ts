@@ -163,8 +163,18 @@ it('readiness: a card is ready after its last two answers were correct', async (
   await reviewCard(repos, { ...base, now: NOW })
   expect((await readinessFor(repos, [note])).readyIds).toEqual([])
   await reviewCard(repos, { ...base, now: NOW + 1 })
-  // The first Good unlocked the second template, which has not been answered yet.
+  // Locked templates count too: a drill covers every card of the package.
   expect(await readinessFor(repos, [note])).toMatchObject({ total: 2, ready: 1, readyIds: [card.id] })
+})
+
+it('drill: a locked card can be drilled and is unlocked by it; undo re-locks it', async () => {
+  const note = await createNote(repos, { type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } }, [], null, NOW)
+  const locked = (await repos.cards.byNote(note.id)).find((c) => c.order === 1)!
+  expect(locked.unlocked).toBe(false)
+  const out = await reviewCard(repos, { cardId: locked.id, grade: 3, correct: true, responseMs: 1, mode: 'drill', userAnswer: 'c d', now: NOW, fuzz: false })
+  expect(out.card.unlocked).toBe(true)
+  await undoLastReview(repos)
+  expect((await repos.cards.get(locked.id))!.unlocked).toBe(false)
 })
 
 describe('backup', () => {

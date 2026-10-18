@@ -143,6 +143,58 @@ describe('cloze markup', () => {
   })
 })
 
+describe('a realistic 25-line package', () => {
+  const PACKAGE = `# Package: 2026-10-21 – Housing market debate
+// Vocabulary
+@vocab affordable | cheap enough for most people to pay | Housing in the center is no longer affordable. | he: בר השגה | pos: adj | #housing
+@vocab skyrocket | to rise very quickly and suddenly | Rents skyrocketed after the war. | he: לזנק | pos: verb | #housing
+@vocab subsidy | money a government pays to lower a price | The subsidy only helps first-time buyers. | he: סובסידיה | pos: noun | #economics
+@vocab red tape | slow official rules and paperwork | Builders complain about the red tape. | he: בירוקרטיה | pos: noun phrase | coll: cut red tape; bureaucratic red tape | #idioms
+@vocab offset | to balance one effect with an opposite one | Higher wages partly offset the rise in rents. | he: לקזז | pos: verb | note: past tense is also "offset" | #economics
+@vocab bottleneck | the point where a process slows down | Planning permits are the real bottleneck. | he: צוואר בקבוק | pos: noun | #housing
+// Sentences
+@sentence Supply simply hasn't kept up with demand. | he: ההיצע פשוט לא עמד בקצב הביקוש. | #economics
+@sentence I'd push back on that a little. | he: הייתי חולק על זה קצת. | note: polite disagreement | #disagreeing
+@sentence That's easier said than done. | he: קל לומר, קשה לעשות. | #idioms
+// Mistakes
+@fix The prices are very high in this days. => Prices are very high these days. | rule: "These days" is the fixed expression; no article before general "prices". | #articles
+@fix I am agree with this policy. => I agree with this policy. | rule: "Agree" is a verb; don't add "am". | #verbs
+@fix It depends of the government. => It depends on the government. | rule: "Depend" takes "on". | #prepositions
+@fix He suggested me to wait. => He suggested that I wait.//He suggested waiting. | rule: "Suggest" doesn't take a person + to-infinitive. | #verb-patterns
+// Natural phrasing
+@natural The prices of houses went up very much. => House prices have shot up. | note: "shoot up" = rise fast and suddenly | #natural-phrasing
+@natural I don't agree with you totally. => I'm not entirely convinced. | note: softer and more natural in a debate | #disagreeing
+@natural This is a big problem for young people. => This hits young people hardest. | #natural-phrasing
+// Tenses
+@tense Rents {{have risen::rise}} by 30% since 2020. | tense: present-perfect | why: a change from a past point until now ("since") | #tenses
+@tense Prices {{rose::rise}} sharply last year. | tense: past-simple | why: finished time ("last year") | #tenses
+@tense They {{have been building::build}} that tower for three years. | tense: present-perfect-continuous | why: ongoing action with duration up to now | #tenses
+@tense By 2030, the city {{will have built::build}} ten thousand new homes. | tense: future-perfect | why: completed before a future point ("by 2030") | #tenses
+@tense When the law passed, prices {{had already doubled::double}}. | tense: past-perfect | why: earlier than another past event | #tenses
+@tense At the moment, the government {{is reviewing::review}} the plan. | tense: present-continuous | why: happening now ("at the moment") | #tenses
+@tense This time next year, we {{will be living::live}} in a smaller flat. | tense: future-continuous | why: in progress at a future moment | #tenses
+// Cloze
+@cloze The bank {{raised//put up::raise}} interest rates again. | #economics
+@cloze Demand {{outstripped::exceeded}} supply for a {{decade}}. | #economics`
+
+  it('imports with zero errors and zero warnings, reading every key', () => {
+    const r = parseImport(PACKAGE)
+    expect(r.packageName).toBe('2026-10-21 – Housing market debate')
+    expect(r.items).toHaveLength(25)
+    expect(r.items.filter((i) => i.status !== 'ok').map((i) => `${i.lineNo}: ${i.messages.join(' ')}`)).toEqual([])
+    const [offset] = r.items.filter((i) => i.content?.type === 'vocab' && i.content.fields.term === 'offset')
+    expect(offset!.content).toMatchObject({ fields: { pos: 'verb', notes: 'past tense is also "offset"', he: 'לקזז' } })
+    const nat = r.items.find((i) => i.content?.type === 'natural')!
+    expect(nat.content).toMatchObject({ fields: { note: '"shoot up" = rise fast and suddenly' } })
+    const ppc = r.items.find((i) => i.content?.type === 'tense' && i.raw.includes('building'))!
+    expect(ppc.content).toMatchObject({ fields: { tense: 'present-perfect-continuous' } })
+    expect(ppc.tags).toContain('tense:present-perfect-continuous')
+    const fix = r.items.find((i) => i.raw.includes('suggested'))!
+    expect(fix.content).toMatchObject({ fields: { right: 'He suggested that I wait.//He suggested waiting.' } })
+    expect(r.items.filter((i) => i.content?.type === 'cloze')).toHaveLength(2)
+  })
+})
+
 it('handles a 1,000-line import quickly', () => {
   const lines = Array.from({ length: 1000 }, (_, i) => `@vocab word${i} | meaning ${i} | I used word${i} today. | #bulk`)
   const t0 = performance.now()

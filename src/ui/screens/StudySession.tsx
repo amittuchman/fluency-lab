@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { repos } from '../../data'
 import { reviewCard, setCardSuspended, undoLastReview } from '../../data/services'
+import { allSignals } from '../../domain/cheatsheets'
 import { answerDrill, startDrill, undoDrill, type DrillState } from '../../domain/drill'
 import { buildPrompt } from '../../domain/prompt'
 import { buildDailyQueue, roundRobin } from '../../domain/queue'
@@ -12,9 +13,20 @@ import { EditNoteModal } from '../components/EditNoteModal'
 import { StudyCard, type CardAnswer } from '../components/StudyCard'
 import { Banner, Button, Empty, Kbd, TagList, TypeBadge } from '../components/ui'
 import { formatDuration, pct } from '../format'
-import { isTypingTarget, useSettings } from '../hooks'
+import { isTypingTarget, useCheatSheets, useSettings } from '../hooks'
 
-export type SessionSource = { kind: 'daily' } | { kind: 'drill'; title: string; cardIds: string[]; readyIds: string[] }
+export type SessionSource =
+  | { kind: 'daily' }
+  | {
+      kind: 'drill'
+      title: string
+      cardIds: string[]
+      readyIds: string[]
+      /** Interleave by note type (default) or by tense (Tense Lab). */
+      group?: 'type' | 'tense'
+      /** Highlight time-signal phrases in sentences (Tense Lab). */
+      highlight?: boolean
+    }
 
 interface Result {
   cardId: string
@@ -41,6 +53,8 @@ const REQUEUE_GAP = 3
 
 export function StudySession({ source }: { source: SessionSource }) {
   const settings = useSettings()
+  const cheatSheets = useCheatSheets()
+  const signals = useMemo(() => (source.kind === 'drill' && source.highlight ? allSignals(cheatSheets) : undefined), [source, cheatSheets])
   const [state, setState] = useState<State | null>(null)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState<Note | null>(null)
@@ -65,7 +79,10 @@ export function StudySession({ source }: { source: SessionSource }) {
         const ids = source.cardIds.filter((id) => cardMap.has(id) && noteMap.has(cardMap.get(id)!.noteId))
         // Rotate across note types so the loop is interleaved, not blocked by type.
         drill = startDrill(
-          roundRobin(ids, (id) => noteMap.get(cardMap.get(id)!.noteId)!.type),
+          roundRobin(ids, (id) => {
+            const n = noteMap.get(cardMap.get(id)!.noteId)!
+            return source.group === 'tense' && n.type === 'tense' ? n.fields.tense : n.type
+          }),
           source.readyIds,
         )
         queue = drill.queue
@@ -281,10 +298,11 @@ export function StudySession({ source }: { source: SessionSource }) {
         </p>
       )}
 
-      {prompt && <StudyCard key={`${card!.id}:${state.results.length}:${state.attempt}`} prompt={prompt} intervals={intervals} onDone={(a) => void onDone(a)} />}
+      {prompt && <StudyCard key={`${card!.id}:${state.results.length}:${state.attempt}`} prompt={prompt} intervals={intervals} signals={signals} onDone={(a) => void onDone(a)} />}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <TagList tags={note!.tags} />
+        {/* Tense tags would give the answer away. */}
+        <TagList tags={note!.tags.filter((t) => !t.startsWith('tense:'))} />
         <div className="flex gap-1">
           <Button size="sm" variant="ghost" onClick={() => void undo()} disabled={!state.results.length}>
             Undo <Kbd>Z</Kbd>

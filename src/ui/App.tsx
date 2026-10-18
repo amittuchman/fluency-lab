@@ -3,9 +3,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { HashRouter, NavLink, Route, Routes, useLocation } from 'react-router'
 import { repos } from '../data'
 import { initialize } from '../data/services'
+import { META } from '../data/repos'
+import type { CheatSheetOverrides } from '../domain/cheatsheets'
 import type { Settings as SettingsT } from '../domain/types'
 import { Empty } from './components/ui'
-import { SettingsContext } from './hooks'
+import { CheatSheetContext, SettingsContext } from './hooks'
 import { Add } from './screens/Add'
 import { Drill } from './screens/Drill'
 import { FormatHelp } from './screens/FormatHelp'
@@ -17,6 +19,7 @@ import { Quiz } from './screens/Quiz'
 import { Settings } from './screens/Settings'
 import { Stats } from './screens/Stats'
 import { StudySession } from './screens/StudySession'
+import { TenseLab } from './screens/TenseLab'
 import { Trash } from './screens/Trash'
 import { WeakSpots } from './screens/WeakSpots'
 
@@ -26,6 +29,7 @@ const NAV: Array<{ to: string; label: string; mobile?: boolean }> = [
   { to: '/add', label: 'Add', mobile: true },
   { to: '/library', label: 'Library', mobile: true },
   { to: '/packages', label: 'Packages' },
+  { to: '/tenses', label: 'Tense Lab' },
   { to: '/quiz', label: 'Quiz' },
   { to: '/weak', label: 'Weak spots' },
   { to: '/stats', label: 'Stats' },
@@ -48,6 +52,7 @@ export function App() {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const settings = useLiveQuery(() => repos.settings.get(), [])
+  const cheatSheets = useLiveQuery(() => repos.meta.get<CheatSheetOverrides>(META.cheatSheets), [])
 
   useEffect(() => {
     initialize(repos)
@@ -72,26 +77,29 @@ export function App() {
 
   return (
     <SettingsContext.Provider value={settings}>
-      <HashRouter>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/study" element={<StudySession source={{ kind: 'daily' }} />} />
-            <Route path="/drill/:kind/:id" element={<Drill />} />
-            <Route path="/add" element={<Add />} />
-            <Route path="/help/format" element={<FormatHelp />} />
-            <Route path="/library" element={<Library />} />
-            <Route path="/packages" element={<Packages />} />
-            <Route path="/quiz" element={<Quiz />} />
-            <Route path="/weak" element={<WeakSpots />} />
-            <Route path="/stats" element={<Stats />} />
-            <Route path="/leeches" element={<Leeches />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/trash" element={<Trash />} />
-            <Route path="*" element={<Empty title="Page not found." />} />
-          </Routes>
-        </Layout>
-      </HashRouter>
+      <CheatSheetContext.Provider value={cheatSheets}>
+        <HashRouter>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/study" element={<StudySession source={{ kind: 'daily' }} />} />
+              <Route path="/drill/:kind/:id" element={<Drill />} />
+              <Route path="/add" element={<Add />} />
+              <Route path="/help/format" element={<FormatHelp />} />
+              <Route path="/library" element={<Library />} />
+              <Route path="/packages" element={<Packages />} />
+              <Route path="/tenses" element={<TenseLab />} />
+              <Route path="/quiz" element={<Quiz />} />
+              <Route path="/weak" element={<WeakSpots />} />
+              <Route path="/stats" element={<Stats />} />
+              <Route path="/leeches" element={<Leeches />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/trash" element={<Trash />} />
+              <Route path="*" element={<Empty title="Page not found." />} />
+            </Routes>
+          </Layout>
+        </HashRouter>
+      </CheatSheetContext.Provider>
     </SettingsContext.Provider>
   )
 }

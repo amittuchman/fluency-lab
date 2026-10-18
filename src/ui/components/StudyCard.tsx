@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { cheatSheetFor, highlightSignals } from '../../domain/cheatsheets'
 import { checkAnswer, suggestedGrade, type CheckResult } from '../../domain/checker'
-import { detectTenses, guessPerson } from '../../domain/conjugator'
+import { acceptedTwin, detectTenses, guessPerson } from '../../domain/conjugator'
 import type { Prompt, Reveal as RevealInfo } from '../../domain/prompt'
 import { tenseLabel } from '../../domain/tags'
 import type { Grade, TenseName } from '../../domain/types'
-import { isTypingTarget } from '../hooks'
+import { isTypingTarget, useCheatSheets } from '../hooks'
 import { Diff } from './Diff'
 import { Button, Kbd } from './ui'
 
@@ -20,6 +21,53 @@ interface Props {
   /** Interval labels per grade ("4d"); null in quiz mode (no grading, just Next). */
   intervals: Record<Grade, string> | null
   onDone: (answer: CardAnswer) => void
+  /** Time-signal phrases to highlight in the sentence (Tense Lab drills). */
+  signals?: string[]
+}
+
+function Signals({ text, signals }: { text: string; signals?: string[] }) {
+  if (!signals?.length) return <>{text}</>
+  return (
+    <>
+      {highlightSignals(text, signals).map((part, i) =>
+        part.signal ? (
+          <mark key={i} className="rounded bg-amber-100 px-0.5 text-inherit dark:bg-amber-900/50" title="time signal">
+            {part.text}
+          </mark>
+        ) : (
+          <span key={i}>{part.text}</span>
+        ),
+      )}
+    </>
+  )
+}
+
+function CheatSheetDetails({ tense }: { tense: TenseName }) {
+  const sheet = cheatSheetFor(tense, useCheatSheets())
+  return (
+    <details className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+      <summary className="cursor-pointer text-sm font-medium">Cheat-sheet: {tenseLabel(tense)}</summary>
+      <dl className="mt-2 space-y-1 text-sm">
+        <div>
+          <dt className="muted inline">Form: </dt>
+          <dd className="inline">{sheet.form}</dd>
+        </div>
+        <div>
+          <dt className="muted inline">Use: </dt>
+          <dd className="inline">{sheet.use}</dd>
+        </div>
+        <div>
+          <dt className="muted inline">Signals: </dt>
+          <dd className="inline">{sheet.signals.join(', ')}</dd>
+        </div>
+        {sheet.examples.map((e) => (
+          <dd key={e} className="italic">
+            {e}
+          </dd>
+        ))}
+      </dl>
+    </details>
+  )
 }
 
 const GRADE_LABELS: Record<Grade, string> = { 1: 'Again', 2: 'Hard', 3: 'Good', 4: 'Easy' }
@@ -29,13 +77,14 @@ const GRADE_LABELS: Record<Grade, string> = { 1: 'Again', 2: 'Hard', 3: 'Good', 
  * Keys: Enter submits / accepts the suggested grade; 1–4 grade; Space reveals a flip card;
  * number keys pick a multiple-choice option.
  */
-export function StudyCard({ prompt, intervals, onDone }: Props) {
+export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
   const started = useRef(Date.now())
   const answeredAt = useRef<number | null>(null)
   const [revealed, setRevealed] = useState(false)
   const [text, setText] = useState('')
   const [check, setCheck] = useState<CheckResult | null>(null)
   const [chosen, setChosen] = useState<number | null>(null)
+  const [almostNote, setAlmostNote] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
@@ -49,7 +98,15 @@ export function StudyCard({ prompt, intervals, onDone }: Props) {
 
   const submitTyped = () => {
     if (prompt.kind !== 'typed' || revealed) return
-    setCheck(checkAnswer(text, prompt.accepted, { typoTolerance: prompt.typoTolerance }))
+    const result = checkAnswer(text, prompt.accepted, { typoTolerance: prompt.typoTolerance })
+    const twin = result.verdict === 'wrong' && prompt.tenseInfo ? acceptedTwin(text, prompt.tenseInfo) : null
+    if (twin) {
+      setCheck({ ...result, verdict: 'almost' })
+      setAlmostNote(`Also correct here: the ${tenseLabel(twin).toLowerCase()} works with this duration. The target form is the ${tenseLabel(prompt.tenseInfo!.tense).toLowerCase()}.`)
+    } else {
+      setCheck(result)
+      setAlmostNote(result.verdict === 'almost' ? 'Almost: one-letter typo, accepted' : null)
+    }
     reveal()
   }
 
@@ -124,7 +181,7 @@ export function StudyCard({ prompt, intervals, onDone }: Props) {
 
       {prompt.context && (
         <p className="mb-3 text-xl leading-9">
-          {prompt.context.before}
+          <Signals text={prompt.context.before} signals={signals} />
           <span
             className={`mx-0.5 inline-block min-w-16 rounded border-b-2 px-1 text-center font-semibold ${
               revealed
@@ -136,7 +193,7 @@ export function StudyCard({ prompt, intervals, onDone }: Props) {
           >
             {revealed ? prompt.reveal.answer : ' ? '}
           </span>
-          {prompt.context.after}
+          <Signals text={prompt.context.after} signals={signals} />
         </p>
       )}
 
@@ -236,7 +293,7 @@ export function StudyCard({ prompt, intervals, onDone }: Props) {
 
       {revealed && (
         <div className="mt-4 space-y-3 border-t border-slate-200 pt-4 dark:border-slate-800" aria-live="polite">
-          {verdict && <VerdictLine verdict={verdict} />}
+          {verdict && <VerdictLine verdict={verdict} almostNote={almostNote} />}
           {prompt.kind === 'typed' && check && check.verdict !== 'correct' && (
             <div>
               <Diff ops={check.diff} />
@@ -246,6 +303,7 @@ export function StudyCard({ prompt, intervals, onDone }: Props) {
             <TenseFeedback typed={text} info={prompt.tenseInfo} why={prompt.reveal.why} />
           )}
           <RevealDetails reveal={prompt.reveal} kind={prompt.kind} showAnswer={prompt.kind === 'flip' || (prompt.kind === 'typed' && check?.verdict !== 'correct' && !prompt.context)} />
+          {prompt.reveal.tense && <CheatSheetDetails tense={prompt.reveal.tense} />}
           <GradeBar intervals={intervals} suggested={suggested} onGrade={finish} />
         </div>
       )}
@@ -253,10 +311,10 @@ export function StudyCard({ prompt, intervals, onDone }: Props) {
   )
 }
 
-function VerdictLine({ verdict }: { verdict: 'correct' | 'almost' | 'wrong' }) {
+function VerdictLine({ verdict, almostNote }: { verdict: 'correct' | 'almost' | 'wrong'; almostNote: string | null }) {
   const map = {
     correct: ['Correct', 'text-emerald-700 dark:text-emerald-300'],
-    almost: ['Almost: one-letter typo, accepted', 'text-amber-700 dark:text-amber-300'],
+    almost: [almostNote ?? 'Almost', 'text-amber-700 dark:text-amber-300'],
     wrong: ['Not quite', 'text-rose-700 dark:text-rose-300'],
   } as const
   return <p className={`font-semibold ${map[verdict][1]}`}>{map[verdict][0]}</p>

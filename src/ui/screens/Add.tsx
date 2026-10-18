@@ -39,6 +39,16 @@ export function Add() {
 
 // ---------------- Import ----------------
 
+/** Blank block to hand to the AI coach (or fill in by hand): one example line per item type. */
+const IMPORT_TEMPLATE = `# Package: <date> – <topic>
+@vocab <term> | <English definition> | <example sentence using the term> | he: <Hebrew> | pos: <part of speech> | coll: <collocation>; <collocation> | #<tag>
+@sentence <key sentence> | he: <Hebrew> | #<tag>
+@fix <what I said> => <correct version> | rule: <the rule in one line> | #<tag>
+@natural <what I said> => <more natural version> | note: <why it sounds better> | #<tag>
+@tense <sentence with the verb as {{answer::base verb}}> | tense: <e.g. present-perfect-continuous> | why: <the time signal / reason> | #tenses
+@cloze <sentence with {{answer}} or {{answer//alternative::hint}}> | #<tag>
+`
+
 type DupChoice = 'skip' | 'update' | 'keep'
 
 interface Row {
@@ -58,6 +68,7 @@ function ImportPane() {
   const [onlyProblems, setOnlyProblems] = useState(false)
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState<(ImportSummary & { name: string }) | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
   const dupIndex = useRepoQuery(() => duplicateIndex(repos), [])
 
   const parsed = useMemo(() => parseImport(deferred), [deferred])
@@ -154,6 +165,23 @@ function ImportPane() {
                 }}
               />
             </label>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(IMPORT_TEMPLATE)
+                  setCopied('Template copied')
+                } catch {
+                  // Clipboard can be blocked (permissions, insecure context): fall back to the text box.
+                  setText(IMPORT_TEMPLATE)
+                  setCopied('Clipboard blocked: template put in the box instead')
+                }
+                setTimeout(() => setCopied(null), 3000)
+              }}
+            >
+              Copy import template
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => setText(sampleText)}>
               Paste the sample
             </Button>
@@ -162,6 +190,11 @@ function ImportPane() {
             </Link>
           </div>
         </div>
+        {copied && (
+          <p className="text-xs text-emerald-700 dark:text-emerald-300" role="status">
+            {copied}
+          </p>
+        )}
         <textarea
           id="import-text"
           className="input min-h-48 font-mono text-sm"

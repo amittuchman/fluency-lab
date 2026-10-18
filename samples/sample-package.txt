@@ -36,7 +36,7 @@
 @tense Inflation usually {{rises::rise}} when demand grows faster than supply. | tense: present simple | why: a general truth | #tenses
 @tense Look, it {{is snowing::snow}} again! | tense: present continuous | why: happening right now, at the moment of speaking | #tenses
 @tense I {{am preparing::prepare}} for an exam this week. | tense: present continuous | why: a temporary activity around now | #tenses
-@tense I {{have read::read}} that book three times. | tense: present perfect | why: life experience up to now; no finished time is mentioned | #tenses
+@tense I {{have read::read}} that book three times so far. | tense: present perfect | why: life experience up to now ("so far"); no finished time is mentioned | #tenses
 @tense The central bank {{has raised::raise}} rates twice this year. | tense: present perfect | why: "this year" is a period that is not finished yet | #tenses
 @tense I {{have been working::work}} here for five years. | tense: present perfect continuous | why: an ongoing action up to now, with its duration ("for five years") | #tenses
 @tense She {{has been studying::study}} English since she was a child. | tense: present perfect continuous | why: an action that started in the past and is still going on ("since") | #tenses

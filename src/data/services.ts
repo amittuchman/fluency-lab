@@ -239,7 +239,15 @@ export async function reviewCard(repos: Repos, input: ReviewInput): Promise<Revi
       }
     }
     const fsrs = scheduled ? scheduler.review(card.fsrs, grade, now) : card.fsrs
-    const updated: Card = { ...card, fsrs, leech: card.leech || isLeechLapse(card.fsrs.lapses, fsrs.lapses), priority: false }
+    const updated: Card = {
+      ...card,
+      fsrs,
+      leech: card.leech || isLeechLapse(card.fsrs.lapses, fsrs.lapses),
+      priority: false,
+      // A package drill ignores the unlock chain; a drilled card then stays in normal SRS. Undo restores
+      // the snapshot (still locked), so this is not recorded in effects.
+      unlocked: card.unlocked || input.mode === 'drill',
+    }
 
     const siblings = (await repos.cards.byNote(card.noteId)).filter((c) => c.id !== card.id)
     const end = dayEnd(now, settings.rolloverHour)
@@ -325,10 +333,13 @@ export interface Readiness {
   readyIds: string[]
 }
 
-/** Studyable cards of a set of notes, and which are "ready" (last two answers correct). */
+/**
+ * All drillable cards of a set of notes (locked ones included: a drill ignores the unlock chain), and
+ * which are "ready" (last two answers correct).
+ */
 export async function readinessFor(repos: Repos, notes: Note[]): Promise<Readiness> {
   const live = notes.filter((n) => n.deletedAt === null && !n.suspended)
-  const cards = (await repos.cards.byNotes(live.map((n) => n.id))).filter((c) => c.unlocked && !c.suspended)
+  const cards = (await repos.cards.byNotes(live.map((n) => n.id))).filter((c) => !c.suspended)
   const logs = await repos.logs.byCards(cards.map((c) => c.id))
   const byCard = new Map<string, ReviewLog[]>()
   for (const l of logs) byCard.set(l.cardId, [...(byCard.get(l.cardId) ?? []), l])

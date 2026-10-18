@@ -1,4 +1,4 @@
-import { conjugate, detectTenses, guessPerson, ingForm, regularPast, tenseChoice, thirdPerson } from './conjugator'
+import { acceptedTwin, conjugate, detectTenses, guessPerson, ingForm, regularPast, tenseChoice, thirdPerson } from './conjugator'
 
 describe('regular rules', () => {
   it.each([
@@ -85,6 +85,22 @@ describe('tenseChoice', () => {
     expect(c.options[0]).toBe('have been working')
     expect(c.options).toContain('have worked')
     expect(new Set(c.options).size).toBe(4)
+  })
+  it('with a duration phrase, never offers the perfect twin as a wrong option, and accepts it when typed', () => {
+    const sentence = 'I have been working here for five years.'
+    const c = tenseChoice({ verb: 'work', tense: 'present-perfect-continuous', answers: ['have been working'], before: 'I ', sentence })!
+    expect(c.options).not.toContain('have worked')
+    const info = { verb: 'work', tense: 'present-perfect-continuous' as const, before: 'I ', sentence }
+    expect(acceptedTwin('have worked', info)).toBe('present-perfect')
+    expect(acceptedTwin('worked', info)).toBeNull()
+    expect(acceptedTwin('have worked', { ...info, sentence: 'I have been working hard.' })).toBeNull()
+  })
+  it('handles an adverb inside the verb phrase', () => {
+    const c = tenseChoice({ verb: 'double', tense: 'past-perfect', answers: ['had already doubled'], before: 'When the law passed, prices ' })!
+    expect(c.options[0]).toBe('had already doubled')
+    expect(c.options).toContain('already doubled')
+    expect(c.options).toContain('have already doubled')
+    expect(detectTenses('have already doubled', 'double', 'they')).toEqual(['present-perfect'])
   })
   it('falls back (null) when the answer is not a plain affirmative form', () => {
     expect(tenseChoice({ verb: 'work', tense: 'present-perfect', answers: ["haven't worked"], before: 'I ' })).toBeNull()

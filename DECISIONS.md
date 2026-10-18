@@ -83,3 +83,31 @@ Non-obvious choices, newest last. Each entry: what, and why.
     mastery loop as the package drill.
 36. **Stats "tense mastery"** = average over the tense's cards of min(1, stability / 21 days): it rises steadily
     with practice and reaches 100% when every card is mature.
+
+## Changes requested after the Phase 2 review
+
+37. **Package Drill ignores the unlock chain and the daily new-card limit.** A drill
+    covers every non-suspended card of the package, locked ones included; drilling a locked card unlocks it so
+    it continues in normal SRS. Drill answers don't consume the daily new/review budget either: the drill is
+    extra work on top of the daily session. "Ready X/Y" counts all those cards.
+38. **Default new cards per day: 25** (was 10).
+39. **"Copy import template"** copies a blank block with one placeholder line per item type, ready to paste
+    into the AI coach's instructions. If the clipboard is blocked, the template goes into the text box instead.
+
+## Tense Lab (Phase 3)
+
+40. **Clicking a grid cell drills that tense right away** (`?all=1`: Tense Lab drills always include every item,
+    since tense practice is repetition, not a one-time mastery check). Cheat-sheets have their own section.
+41. **Cheat-sheet edits are stored as overrides in the meta table**; "Reset to default" removes the override.
+    They ride along in backups.
+42. **Time-signal highlighting** uses the signal words of all 12 cheat-sheets (whole words, longest first), so
+    editing a sheet's signals changes what gets highlighted. Only in Tense Lab drills; normal reviews stay plain.
+43. **Tense tags (`#tense:…`) are hidden under study cards**: they would give the answer away.
+44. **Perfect vs perfect continuous with a duration** ("for five years", "since 2020"): both are usually correct
+    English. The multiple choice never offers the twin as a wrong option, and typing the twin in a fill card
+    counts as "almost" (Hard) with an explanation instead of "wrong".
+45. **Adverbs inside the verb phrase** ("had already doubled", "have just left") are handled by the conjugator:
+    it matches without the adverb and puts the adverb into every option. Negatives, questions and passives still
+    fall back to typed input.
+46. **Sample fix:** "I have read that book three times" also allows the past simple in American English;
+    the sample now says "three times so far", which only fits the present perfect.

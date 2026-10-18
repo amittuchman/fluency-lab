@@ -115,7 +115,7 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z' ]/g, '').replace(/\s
 
 /** Which tenses (for the given person) produce this exact form. */
 export function detectTenses(answer: string, verbPhrase: string, person: Person): TenseName[] {
-  const a = norm(answer)
+  const a = splitAdverb(answer).core
   return ALL_TENSES.filter((t) => conjugateAll(verbPhrase, t, person).some((f) => norm(f) === a))
 }
 
@@ -181,24 +181,69 @@ export function confusableTenses(t: TenseName): TenseName[] {
  * reproduce the reference answer (negatives, questions, passives, unknown verbs): the caller
  * then falls back to typed input.
  */
-export function tenseChoice(opts: { verb: string; tense: TenseName; answers: string[]; before: string }): TenseChoice | null {
+/** Perfect ↔ perfect continuous of the same time ("have worked" ↔ "have been working"). */
+export function perfectTwin(t: TenseName): TenseName | null {
+  if (t.endsWith('-perfect-continuous')) return t.replace('-perfect-continuous', '-perfect') as TenseName
+  if (t.endsWith('-perfect')) return `${t}-continuous` as TenseName
+  return null
+}
+
+/** A duration phrase ("for five years", "since 2020") makes the perfect and perfect continuous both possible. */
+export function hasDuration(sentence: string): boolean {
+  return /\b(for|since|how long|all (day|morning|evening|night|week|month|year))\b/i.test(sentence)
+}
+
+/**
+ * If a typed answer is the perfect twin of the target in a duration context ("have worked" for "have
+ * been working ... for five years"), it is also correct English: return that twin, else null.
+ */
+export function acceptedTwin(typed: string, info: { verb: string; tense: TenseName; before: string; sentence: string }): TenseName | null {
+  const twin = perfectTwin(info.tense)
+  if (!twin || !hasDuration(info.sentence)) return null
+  const persons: Person[] = [guessPerson(info.before), 'I', 'he', 'they']
+  return persons.some((p) => detectTenses(typed, info.verb, p).includes(twin)) ? twin : null
+}
+
+export function tenseChoice(opts: { verb: string; tense: TenseName; answers: string[]; before: string; sentence?: string }): TenseChoice | null {
   const verb = opts.verb.trim().toLowerCase()
   if (!verb || !/^[a-z]+( [a-z]+)?$/.test(verb)) return null
   const guessed = guessPerson(opts.before)
   const persons: Person[] = [guessed, ...(['I', 'he', 'they'] as Person[]).filter((p) => p !== guessed)]
-  const answers = opts.answers.map(norm)
+  const split = splitAdverb(opts.answers[0]!)
+  const answers = [...opts.answers.map(norm), split.core]
   const person = persons.find((p) => conjugateAll(verb, opts.tense, p).some((f) => answers.includes(norm(f))))
   if (!person) return null
   const correct = opts.answers[0]!
-  const seen = new Set([norm(correct)])
+  const seen = new Set([norm(correct), split.core])
   const distractors: string[] = []
-  const order = [...CONFUSABLE[opts.tense], ...ALL_TENSES.filter((t) => t !== opts.tense && !CONFUSABLE[opts.tense].includes(t))]
+  // With a duration phrase the perfect twin is usually also correct, so it can't be a wrong option.
+  const excluded = opts.sentence && hasDuration(opts.sentence) ? perfectTwin(opts.tense) : null
+  const order = [...CONFUSABLE[opts.tense], ...ALL_TENSES.filter((t) => t !== opts.tense && !CONFUSABLE[opts.tense].includes(t))].filter(
+    (t) => t !== excluded,
+  )
   for (const t of order) {
     const f = conjugate(verb, t, person)
     if (seen.has(norm(f))) continue
     seen.add(norm(f))
-    distractors.push(f)
+    distractors.push(split.adverb ? insertAdverb(f, split.adverb) : f)
     if (distractors.length === 3) break
   }
   return { options: [correct, ...distractors], correctIndex: 0, person }
+}
+
+/** Adverbs that sit inside a verb phrase: "have already left", "had just finished", "will never forget". */
+const MID_ADVERBS = new Set('already just never ever always still recently also finally probably really often usually'.split(' '))
+
+/** Remove one mid-position adverb from a verb phrase: "had already doubled" → core "had doubled". */
+export function splitAdverb(answer: string): { core: string; adverb: string | null } {
+  const words = norm(answer).split(' ')
+  const i = words.findIndex((w) => MID_ADVERBS.has(w))
+  if (i < 0 || words.length < 2) return { core: norm(answer), adverb: null }
+  return { core: [...words.slice(0, i), ...words.slice(i + 1)].join(' '), adverb: words[i]! }
+}
+
+/** Put the adverb after the first auxiliary ("have already left"), or before a one-word verb ("already left"). */
+function insertAdverb(form: string, adverb: string): string {
+  const words = form.split(' ')
+  return words.length >= 2 ? [words[0], adverb, ...words.slice(1)].join(' ') : `${adverb} ${form}`
 }

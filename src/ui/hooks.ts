@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { createContext, useContext, useEffect, useState, type DependencyList } from 'react'
+import type { CheatSheetOverrides } from '../domain/cheatsheets'
 import { DEFAULT_SETTINGS, type Settings } from '../domain/types'
 
 /**
@@ -11,6 +12,13 @@ export function useRepoQuery<T>(querier: () => Promise<T>, deps: DependencyList)
 }
 
 export const SettingsContext = createContext<Settings>(DEFAULT_SETTINGS)
+
+/** User edits to the tense cheat-sheets (defaults live in domain/cheatsheets). */
+export const CheatSheetContext = createContext<CheatSheetOverrides | undefined>(undefined)
+
+export function useCheatSheets(): CheatSheetOverrides | undefined {
+  return useContext(CheatSheetContext)
+}
 
 export function useSettings(): Settings {
   return useContext(SettingsContext)

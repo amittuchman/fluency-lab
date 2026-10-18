@@ -85,4 +85,5 @@ export const META = {
   lastBackupAt: 'lastBackupAt',
   onboarding: 'onboarding',
   backupReminderSnoozedAt: 'backupReminderSnoozedAt',
+  cheatSheets: 'cheatSheets',
 } as const

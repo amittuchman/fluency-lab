@@ -186,7 +186,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  newPerDay: 10,
+  newPerDay: 25,
   maxReviewsPerDay: 150,
   desiredRetention: 0.9,
   rolloverHour: 4,

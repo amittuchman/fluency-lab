@@ -50,7 +50,7 @@ export interface TypedPrompt extends PromptBase {
   typoTolerance: boolean
   multiline: boolean
   /** For tense cards: lets the UI explain a wrong tense. */
-  tenseInfo?: { verb: string; tense: TenseName; before: string }
+  tenseInfo?: { verb: string; tense: TenseName; before: string; sentence: string }
 }
 
 export interface ChoicePrompt extends PromptBase {
@@ -266,7 +266,7 @@ export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt
       const reveal: Reveal = { answer: answers[0] ?? '', full, tense: f.tense, ...(f.why ? { why: f.why } : {}) }
       const context = { before: b?.before ?? '', after: b?.after ?? '' }
       if (t === 'tense-choose') {
-        const choice = tenseChoice({ verb, tense: f.tense, answers, before: context.before })
+        const choice = tenseChoice({ verb, tense: f.tense, answers, before: context.before, sentence: full })
         if (choice) {
           const options = shuffle(choice.options, rand)
           return {
@@ -291,7 +291,7 @@ export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt
         multiline: false,
         reveal,
         speak: full,
-        ...(verb ? { tenseInfo: { verb, tense: f.tense, before: context.before } } : {}),
+        ...(verb ? { tenseInfo: { verb, tense: f.tense, before: context.before, sentence: full } } : {}),
       }
     }
 

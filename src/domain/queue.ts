@@ -65,7 +65,8 @@ export function todayCounts(todayLogs: readonly ReviewLog[]): TodayCounts {
   let newDone = 0
   let reviewsDone = 0
   for (const l of todayLogs) {
-    if (!l.scheduled) continue
+    // Drill answers don't consume the daily budget: a drill is extra work on top of the daily session.
+    if (!l.scheduled || l.mode === 'drill') continue
     if (l.cardBefore.fsrs.state === 0) newDone++
     else reviewsDone++
   }
