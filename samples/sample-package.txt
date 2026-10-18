@@ -1,0 +1,62 @@
+# Package: Sample – Economics debate and everyday talk
+// Sample data for Fluency Lab. Every line is one item; see README for the format.
+
+// ---- Vocabulary ----
+@vocab reluctant | unwilling and hesitant to do something | He was reluctant to commit to a deadline. | he: לא להוט, מהסס | pos: adj | #adjectives
+@vocab trade-off | a balance between two things you cannot fully have at the same time | There's always a trade-off between speed and accuracy. | he: פשרה, ויתור על דבר אחד לטובת אחר | pos: noun | #economics
+@vocab clear-cut | easy to understand, with no room for doubt | The evidence isn't as clear-cut as it seems. | he: חד-משמעי | pos: adj | #natural-phrasing
+@vocab leverage | to use something you have in order to get a better result | We can leverage our data to make better decisions. | he: למנף | pos: verb | #business
+@vocab bottleneck | the point where a process slows down because of a limit | Hiring has become the main bottleneck for the team. | he: צוואר בקבוק | pos: noun | #business
+@vocab nuanced | showing small but important differences | She gave a nuanced answer to a difficult question. | he: רגיש לדקויות, מורכב | pos: adj | #adjectives
+@vocab rule of thumb | a practical rule based on experience rather than exact theory | As a rule of thumb, save at least ten percent of your income. | he: כלל אצבע | pos: noun phrase | #idioms
+@vocab follow through | to finish what you started or promised to do | He has great ideas, but he rarely follows through. | he: לבצע עד הסוף | pos: phrasal verb | coll: follow through on a promise; follow through with a plan | #phrasal-verbs
+@vocab incentive | something that encourages a person or firm to do something | Tax cuts give firms an incentive to invest. | he: תמריץ | pos: noun | #economics
+
+// ---- Key sentences ----
+@sentence The trade-off isn't as clear-cut as it looks. | he: הפשרה כאן פחות חד-משמעית ממה שהיא נראית. | #natural-phrasing
+@sentence That's a fair point, but I see it a bit differently. | he: זו נקודה הוגנת, אבל אני רואה את זה קצת אחרת. | #disagreeing
+@sentence Let me think out loud for a second. | he: תן לי לחשוב בקול לרגע. | #conversation
+@sentence It depends on how you define success. | he: זה תלוי איך מגדירים הצלחה. | #conversation
+
+// ---- Recurring mistakes ----
+@fix I very agree with you. => I completely agree with you. | rule: "Very" can't modify a verb. Use "completely", "totally" or "really". | #adverbs
+@fix He explained me the problem. => He explained the problem to me. | rule: "Explain" needs "to" before the person: explain something to someone. | #verb-patterns
+@fix I am working here since 2020. => I have been working here since 2020. | rule: With "since" or "for" and a period that continues until now, use the present perfect (continuous), not the present continuous. | #tenses
+@fix It depends of the situation. => It depends on the situation. | rule: "Depend" takes "on". | #prepositions
+@fix I didn't went to the meeting. => I didn't go to the meeting. | rule: After "did" or "didn't", use the base form of the verb. | #tenses
+
+// ---- More natural phrasing ----
+@natural I think this solution is very good. => I think this approach makes a lot of sense. | #natural-phrasing
+@natural I want to say something about this. => Can I jump in here for a second? | note: A natural way to take a turn in a discussion. | #conversation
+@natural This is a very big problem. => This is a serious problem. | note: "Serious" is the usual collocation with "problem". | #collocations
+@natural We need to make the decision fast. => We need to make a quick decision. | #collocations
+
+// ---- Tenses (two per tense) ----
+@tense She {{works::work}} from home on Fridays. | tense: present simple | why: a regular habit or routine | #tenses
+@tense Inflation usually {{rises::rise}} when demand grows faster than supply. | tense: present simple | why: a general truth | #tenses
+@tense Look, it {{is snowing::snow}} again! | tense: present continuous | why: happening right now, at the moment of speaking | #tenses
+@tense I {{am preparing::prepare}} for an exam this week. | tense: present continuous | why: a temporary activity around now | #tenses
+@tense I {{have read::read}} that book three times. | tense: present perfect | why: life experience up to now; no finished time is mentioned | #tenses
+@tense The central bank {{has raised::raise}} rates twice this year. | tense: present perfect | why: "this year" is a period that is not finished yet | #tenses
+@tense I {{have been working::work}} here for five years. | tense: present perfect continuous | why: an ongoing action up to now, with its duration ("for five years") | #tenses
+@tense She {{has been studying::study}} English since she was a child. | tense: present perfect continuous | why: an action that started in the past and is still going on ("since") | #tenses
+@tense The central bank {{raised::raise}} rates last week. | tense: past simple | why: a finished action at a finished time ("last week") | #tenses
+@tense We {{met::meet}} at a conference in Berlin in 2019. | tense: past simple | why: a finished event at a specific past time | #tenses
+@tense I {{was cooking::cook}} dinner when the phone rang. | tense: past continuous | why: an action in progress that a shorter action interrupted | #tenses
+@tense At eight o'clock last night, they {{were watching::watch}} the debate. | tense: past continuous | why: an action in progress at a specific moment in the past | #tenses
+@tense By the time we arrived, the movie {{had started::start}}. | tense: past perfect | why: an action completed before another past action ("arrived") | #tenses
+@tense He realized that he {{had left::leave}} his keys at the office. | tense: past perfect | why: the earlier of two past events ("left" happened before "realized") | #tenses
+@tense They {{had been waiting::wait}} for an hour when the bus finally came. | tense: past perfect continuous | why: the duration of an action up to a moment in the past | #tenses
+@tense Her eyes were red because she {{had been crying::cry}}. | tense: past perfect continuous | why: an ongoing earlier activity that explains a past result | #tenses
+@tense I think prices {{will go::go}} up next year. | tense: future simple | why: a prediction based on opinion ("I think") | #tenses
+@tense Don't worry, I {{will help::help}} you with the report. | tense: future simple | why: an offer or decision made at the moment of speaking | #tenses
+@tense This time tomorrow, I {{will be flying::fly}} to London. | tense: future continuous | why: an action in progress at a specific future moment | #tenses
+@tense Don't call at nine; we {{will be having::have}} dinner. | tense: future continuous | why: an action that will be in progress at that future time | #tenses
+@tense By next June, I {{will have finished::finish}} my degree. | tense: future perfect | why: an action completed before a future point ("by next June") | #tenses
+@tense The project {{will have ended::end}} by the time you get back. | tense: future perfect | why: completion before a future moment ("by the time you get back") | #tenses
+@tense By December, she {{will have been working::work}} at the bank for ten years. | tense: future perfect continuous | why: the duration of an action up to a future point | #tenses
+@tense In May, we {{will have been living::live}} here for exactly two years. | tense: future perfect continuous | why: the duration of an ongoing situation up to a future moment | #tenses
+
+// ---- Free cloze ----
+@cloze Could you {{walk me through::explain step by step}} the numbers? | #phrasal-verbs
+@cloze The central bank {{raised//increased::raise}} rates last week to fight {{inflation}}. | #economics
