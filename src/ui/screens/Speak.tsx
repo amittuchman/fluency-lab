@@ -154,7 +154,7 @@ export function Speak() {
               {(showText || !audioOn || result) && <p className="text-xl">{item.target}</p>}
             </>
           ) : (
-            <p className={`text-xl ${item.cueIsHebrew ? 'he' : ''}`} dir="auto">
+            <p className={`text-xl ${item.cueIsHebrew ? 'he' : ''}`} dir="auto" lang={item.cueIsHebrew ? 'he' : undefined}>
               {item.cue || '(no prompt: say the sentence you remember)'}
             </p>
           )}

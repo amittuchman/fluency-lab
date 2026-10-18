@@ -40,3 +40,15 @@ export function newId(): string {
 export function uniq<T>(items: readonly T[]): T[] {
   return [...new Set(items)]
 }
+
+/** Group items by key (linear time; keeps input order within each group). */
+export function groupBy<T>(items: Iterable<T>, key: (t: T) => string): Map<string, T[]> {
+  const map = new Map<string, T[]>()
+  for (const it of items) {
+    const k = key(it)
+    const list = map.get(k)
+    if (list) list.push(it)
+    else map.set(k, [it])
+  }
+  return map
+}

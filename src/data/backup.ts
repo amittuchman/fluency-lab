@@ -38,6 +38,7 @@ function newerCard(a: Card, b: Card): Card {
  */
 export async function importBackup(repos: Repos, file: BackupFile, mode: 'merge' | 'replace'): Promise<void> {
   const t = file.tables
+  const lastBackupBefore = (await repos.meta.get<number>(META.lastBackupAt)) ?? 0
   await repos.transaction(async () => {
     if (mode === 'replace') {
       await repos.clearAll()
@@ -62,5 +63,8 @@ export async function importBackup(repos: Repos, file: BackupFile, mode: 'merge'
     }
     await repos.meta.set(META.onboarding, 'done')
     await repos.meta.set(META.schemaVersion, SCHEMA_VERSION)
+    // The file itself is a backup as of its export time (its own meta predates that export).
+    const fromFile = (t.meta.find((m) => m.key === META.lastBackupAt)?.value as number | undefined) ?? 0
+    await repos.meta.set(META.lastBackupAt, Math.max(lastBackupBefore, fromFile, file.exportedAt))
   })
 }

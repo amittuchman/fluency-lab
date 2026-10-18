@@ -1,5 +1,6 @@
 import { dayEnd, dayStart } from './scheduler'
 import type { Card, Note, ReviewLog, Settings } from './types'
+import { groupBy } from './util'
 
 /** A card can be studied: live note, nothing suspended, unlocked, not buried. */
 export function isStudyable(card: Card, note: Note | undefined, now: number): note is Note {
@@ -45,11 +46,7 @@ export function interleave<T>(items: readonly T[], keys: (t: T) => [string, stri
 
 /** Take one item from each group in turn (groups keep their internal order). */
 export function roundRobin<T>(items: readonly T[], group: (t: T) => string): T[] {
-  const groups = new Map<string, T[]>()
-  for (const it of items) {
-    const g = group(it)
-    groups.set(g, [...(groups.get(g) ?? []), it])
-  }
+  const groups = groupBy(items, group)
   const lists = [...groups.values()]
   const out: T[] = []
   for (let i = 0; out.length < items.length; i++) for (const l of lists) if (i < l.length) out.push(l[i]!)

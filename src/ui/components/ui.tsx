@@ -84,6 +84,21 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
         tabIndex={-1}
         className={`max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl outline-none sm:rounded-2xl dark:bg-slate-900 ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Keep Tab focus inside the dialog.
+          if (e.key !== 'Tab' || !ref.current) return
+          const items = ref.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, textarea, summary, [tabindex="0"]')
+          if (!items.length) return
+          const first = items[0]!
+          const last = items[items.length - 1]!
+          if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) {
+            e.preventDefault()
+            last.focus()
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault()
+            first.focus()
+          }
+        }}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">{title}</h2>

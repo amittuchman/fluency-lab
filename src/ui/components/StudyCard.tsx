@@ -225,7 +225,7 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
 
       {prompt.kind === 'flip' && (
         <div className="py-4 text-center">
-          <p className={`text-3xl font-semibold ${prompt.promptIsHebrew ? 'he' : ''}`} dir="auto">
+          <p className={`text-3xl font-semibold ${prompt.promptIsHebrew ? 'he' : ''}`} dir="auto" lang={prompt.promptIsHebrew ? 'he' : undefined}>
             {prompt.front}
           </p>
           {prompt.frontSub && <p className="muted mt-1 text-sm italic">{prompt.frontSub}</p>}
@@ -236,6 +236,7 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
         <p
           className={`mb-3 text-lg ${prompt.promptIsHebrew ? 'he text-xl' : ''} ${prompt.context ? 'muted' : 'font-medium'}`}
           dir="auto"
+          lang={prompt.promptIsHebrew ? 'he' : undefined}
         >
           {prompt.kind === 'typed' && prompt.instruction.startsWith('Complete the natural') ? <span className="muted">Your version: </span> : null}
           {prompt.prompt}
@@ -476,7 +477,7 @@ function RevealDetails({ reveal, kind, showAnswer }: { reveal: RevealInfo; kind:
       )}
       {reveal.collocations && reveal.collocations.length > 0 && <p className="muted">Collocations: {reveal.collocations.join(' · ')}</p>}
       {reveal.he && (
-        <p className="he text-base" dir="auto">
+        <p className="he text-base" dir="auto" lang="he">
           {reveal.he}
         </p>
       )}

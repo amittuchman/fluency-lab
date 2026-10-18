@@ -7,6 +7,7 @@ import { clozePlain } from '../../domain/cloze'
 import { primaryText } from '../../domain/parser'
 import { dayEnd, formatInterval } from '../../domain/scheduler'
 import { NOTE_TYPES, type Card, type Note } from '../../domain/types'
+import { groupBy } from '../../domain/util'
 import { EditNoteModal } from '../components/EditNoteModal'
 import { parseTags } from '../noteForm'
 import { Button, Confirm, Empty, Modal, PageHeader, TagList, TypeBadge } from '../components/ui'
@@ -73,8 +74,7 @@ export function Library() {
   const rows: Row[] = useMemo(() => {
     if (!data) return []
     const end = dayEnd(now, settings.rolloverHour)
-    const byNote = new Map<string, Card[]>()
-    for (const c of data.cards) byNote.set(c.noteId, [...(byNote.get(c.noteId) ?? []), c])
+    const byNote = groupBy(data.cards, (c) => c.noteId)
     return data.notes
       .map((note) => {
         const cards = byNote.get(note.id) ?? []

@@ -205,7 +205,8 @@ function ImportPane() {
             setOverrides({})
           }}
           spellCheck={false}
-          dir="auto"
+          // Package text is line-based and starts with @type, so it is LTR; dir="auto" doubled layout time on big pastes.
+          dir="ltr"
         />
       </div>
 
@@ -229,7 +230,7 @@ function ImportPane() {
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <Button variant="primary" onClick={() => void save()} disabled={saving || counts.create + counts.update === 0}>
-                Confirm and save
+                {saving ? 'Saving…' : 'Confirm and save'}
               </Button>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />

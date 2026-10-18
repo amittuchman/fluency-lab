@@ -41,3 +41,8 @@ export function isTypingTarget(e: KeyboardEvent): boolean {
   const tag = el.tagName
   return (tag === 'INPUT' && !(el as HTMLInputElement).readOnly) || (tag === 'TEXTAREA' && !(el as HTMLTextAreaElement).readOnly) || tag === 'SELECT' || el.isContentEditable
 }
+
+/** Open the keyboard-shortcuts overlay (it listens for this event). */
+export function openShortcuts(): void {
+  window.dispatchEvent(new Event('fl:shortcuts'))
+}

@@ -194,6 +194,8 @@ describe('backup', () => {
     expect(await r2.cards.all()).toEqual(await repos.cards.all())
     expect(await r2.logs.all()).toEqual(await repos.logs.all())
     expect(await r2.packages.all()).toEqual(await repos.packages.all())
+    // Restoring from a file counts as having a backup from the file's export time.
+    expect(await r2.meta.get('lastBackupAt')).toBe(NOW)
     await other.delete()
   })
 

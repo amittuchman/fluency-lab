@@ -1,5 +1,5 @@
 import type { Card, Note, QuizConfig, QuizFormat, QuizResult, ReviewLog } from './types'
-import { shuffle } from './util'
+import { groupBy, shuffle } from './util'
 
 /** Quiz format of each auto-checkable template; self-graded and audio templates are not quizzable. */
 export function quizFormat(template: string): QuizFormat | null {
@@ -60,10 +60,8 @@ export interface PickInput {
  * (any template of the note, locked or not: a quiz is an assessment).
  */
 export function pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs, rand = Math.random }: PickInput): QuizQuestion[] {
-  const byNote = new Map<string, Card[]>()
-  for (const c of cards) byNote.set(c.noteId, [...(byNote.get(c.noteId) ?? []), c])
-  const logsByNote = new Map<string, ReviewLog[]>()
-  for (const l of logs) logsByNote.set(l.noteId, [...(logsByNote.get(l.noteId) ?? []), l])
+  const byNote = groupBy(cards, (c) => c.noteId)
+  const logsByNote = groupBy(logs, (l) => l.noteId)
 
   const live = notes.filter((n) => n.deletedAt === null && !n.suspended)
   let pool: Note[]

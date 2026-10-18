@@ -13,7 +13,7 @@ import {
   type ReviewMode,
   type Settings,
 } from '../domain/types'
-import { newId, uniq } from '../domain/util'
+import { groupBy, newId, uniq } from '../domain/util'
 import { SCHEMA_VERSION } from './dexie'
 import { META, type Repos } from './repos'
 
@@ -339,10 +339,13 @@ export interface Readiness {
  */
 export async function readinessFor(repos: Repos, notes: Note[]): Promise<Readiness> {
   const live = notes.filter((n) => n.deletedAt === null && !n.suspended)
-  const cards = (await repos.cards.byNotes(live.map((n) => n.id))).filter((c) => !c.suspended)
-  const logs = await repos.logs.byCards(cards.map((c) => c.id))
-  const byCard = new Map<string, ReviewLog[]>()
-  for (const l of logs) byCard.set(l.cardId, [...(byCard.get(l.cardId) ?? []), l])
+  const noteIds = new Set(live.map((n) => n.id))
+  const candidates = noteIds.size <= 500 ? await repos.cards.byNotes([...noteIds]) : (await repos.cards.all()).filter((c) => noteIds.has(c.noteId))
+  const cards = candidates.filter((c) => !c.suspended)
+  // An index lookup per card is fast for a package; for thousands of cards one full scan is cheaper.
+  const ids = new Set(cards.map((c) => c.id))
+  const logs = ids.size <= 500 ? await repos.logs.byCards([...ids]) : (await repos.logs.all()).filter((l) => ids.has(l.cardId))
+  const byCard = groupBy(logs, (l) => l.cardId)
   const order = new Map(live.map((n) => [n.id, n.createdAt]))
   cards.sort((a, b) => order.get(a.noteId)! - order.get(b.noteId)! || a.order - b.order)
   const readyIds = cards.filter((c) => isReadyFromLogs(byCard.get(c.id) ?? [])).map((c) => c.id)

@@ -1,29 +1,32 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { HashRouter, NavLink, Route, Routes, useLocation } from 'react-router'
 import { repos } from '../data'
 import { initialize } from '../data/services'
 import { META } from '../data/repos'
 import type { CheatSheetOverrides } from '../domain/cheatsheets'
 import type { Settings as SettingsT } from '../domain/types'
-import { Empty } from './components/ui'
-import { CheatSheetContext, SettingsContext } from './hooks'
+import { ShortcutsOverlay } from './components/Shortcuts'
+import { Empty, Kbd } from './components/ui'
+import { CheatSheetContext, openShortcuts, SettingsContext } from './hooks'
 import { speechRecognitionSupported } from './speech'
-import { Add } from './screens/Add'
-import { Drill } from './screens/Drill'
-import { FormatHelp } from './screens/FormatHelp'
 import { Home } from './screens/Home'
-import { Library } from './screens/Library'
-import { Leeches } from './screens/Leeches'
-import { Packages } from './screens/Packages'
-import { Quiz } from './screens/Quiz'
-import { Settings } from './screens/Settings'
-import { Stats } from './screens/Stats'
-import { Speak } from './screens/Speak'
 import { StudySession } from './screens/StudySession'
-import { TenseLab } from './screens/TenseLab'
-import { Trash } from './screens/Trash'
-import { WeakSpots } from './screens/WeakSpots'
+
+// Home and the study session load with the app; other screens load on first visit (all are precached offline).
+const Add = lazy(() => import('./screens/Add').then((m) => ({ default: m.Add })))
+const Drill = lazy(() => import('./screens/Drill').then((m) => ({ default: m.Drill })))
+const FormatHelp = lazy(() => import('./screens/FormatHelp').then((m) => ({ default: m.FormatHelp })))
+const Library = lazy(() => import('./screens/Library').then((m) => ({ default: m.Library })))
+const Leeches = lazy(() => import('./screens/Leeches').then((m) => ({ default: m.Leeches })))
+const Packages = lazy(() => import('./screens/Packages').then((m) => ({ default: m.Packages })))
+const Quiz = lazy(() => import('./screens/Quiz').then((m) => ({ default: m.Quiz })))
+const Settings = lazy(() => import('./screens/Settings').then((m) => ({ default: m.Settings })))
+const Stats = lazy(() => import('./screens/Stats').then((m) => ({ default: m.Stats })))
+const Speak = lazy(() => import('./screens/Speak').then((m) => ({ default: m.Speak })))
+const TenseLab = lazy(() => import('./screens/TenseLab').then((m) => ({ default: m.TenseLab })))
+const Trash = lazy(() => import('./screens/Trash').then((m) => ({ default: m.Trash })))
+const WeakSpots = lazy(() => import('./screens/WeakSpots').then((m) => ({ default: m.WeakSpots })))
 
 const NAV: Array<{ to: string; label: string; mobile?: boolean; needsSpeech?: boolean }> = [
   { to: '/', label: 'Home', mobile: true },
@@ -120,6 +123,12 @@ function Layout({ children }: { children: ReactNode }) {
   const [more, setMore] = useState(false)
   const location = useLocation()
   useEffect(() => setMore(false), [location.pathname])
+  // A distinct page title per screen, for screen readers and browser history.
+  useEffect(() => {
+    const p = location.pathname
+    const label = p.startsWith('/drill') ? 'Drill' : p.startsWith('/help') ? 'Import format' : NAV.find((n) => n.to !== '/' && p.startsWith(n.to))?.label
+    document.title = label ? `${label} · Fluency Lab` : 'Fluency Lab'
+  }, [location.pathname])
 
   return (
     <div className="min-h-dvh md:flex">
@@ -135,11 +144,15 @@ function Layout({ children }: { children: ReactNode }) {
             </NavLink>
           ))}
         </nav>
+        <button className="muted mt-4 px-3 text-xs hover:underline" onClick={openShortcuts}>
+          Keyboard shortcuts <Kbd>?</Kbd>
+        </button>
       </aside>
 
       <main id="main" className="min-w-0 flex-1 px-4 pb-24 pt-4 md:px-8 md:pb-8 md:pt-6">
-        {children}
+        <Suspense fallback={<p className="muted">Loading…</p>}>{children}</Suspense>
       </main>
+      <ShortcutsOverlay />
 
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden dark:border-slate-800 dark:bg-slate-950/95"

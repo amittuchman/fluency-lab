@@ -130,3 +130,26 @@ Non-obvious choices, newest last. Each entry: what, and why.
     labelled approximate, the user can override the grade, and "Type instead" is always offered.
 52. **Speak mode is practice only**: shadowing and speaking recall don't log reviews or change scheduling.
 53. **Quizzes skip dictation and speaking cards**, so a quiz can be taken silently (e.g. on a bus).
+
+## Polish (Phase 5)
+
+54. **Charts are hand-rolled SVG** (no chart library): a 14-day forecast (one series, so no legend) and a
+    90-day heatmap on a single blue ramp, with separate light/dark steps checked with a palette validator.
+    Both have a hover readout and a "Show as table" view.
+55. **Screens load lazily** except Home and the study session. The first load got smaller; the service worker
+    still precaches every chunk, so offline use is unchanged.
+56. **Performance at 5,000 notes / 12,500 cards / 30,000 reviews:** every screen computation runs in
+    5–30 ms (`src/data/perf.test.ts`); in a real browser the screens open in about 0.5–1.3 s (mostly reading
+    IndexedDB). Two fixes came out of it: vocab parsing compiled a Unicode regex per term (5,000 lines took
+    2.8 s, now ~0.1 s), and very large readiness/drill lookups now scan once instead of using `anyOf` with
+    thousands of keys.
+57. **The import box is `dir="ltr"`**, not `dir="auto"`: package text starts with `@type`, so it is LTR anyway,
+    and `auto` doubled the layout cost of large pastes. Hebrew segments still render right-to-left inside it.
+58. **Accessibility:** focus trap in dialogs, a skip link, one page title per screen, `lang="he"` on Hebrew
+    text, `aria-live` on answer feedback and chart readouts, labelled controls, keyboard access throughout, and a
+    `?` overlay listing every shortcut.
+59. **E2E test runs on the installed Microsoft Edge** (`channel: 'msedge'`) so no browser download is needed.
+60. **GitHub Pages deploy is a workflow file in the repo**; nothing is deployed until you push it to GitHub
+    and switch Pages to "GitHub Actions" (see README).
+61. **Restoring a backup counts as having a backup** from the file's export time, so the "never backed up"
+    reminder doesn't appear right after a restore (found in the final end-to-end pass).

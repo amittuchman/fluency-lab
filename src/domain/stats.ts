@@ -1,6 +1,7 @@
 import { dayKey, shiftDayKey } from './scheduler'
 import type { Card, Note, ReviewLog, TenseName } from './types'
 import { ALL_TENSES } from './tags'
+import { groupBy } from './util'
 
 const DAY = 86_400_000
 /** Answers slower than this are counted as this long (the user probably stepped away). */
@@ -103,16 +104,47 @@ export interface TenseStat {
 }
 
 export function tenseStats(notes: readonly Note[], cards: readonly Card[], now: number, dayEndTs: number): TenseStat[] {
-  const byTense = new Map<string, Note[]>()
-  for (const n of notes) if (n.type === 'tense') byTense.set(n.fields.tense, [...(byTense.get(n.fields.tense) ?? []), n])
-  const cardsByNote = new Map<string, Card[]>()
-  for (const c of cards) cardsByNote.set(c.noteId, [...(cardsByNote.get(c.noteId) ?? []), c])
+  const byTense = groupBy(notes.filter((n) => n.type === 'tense'), (n) => (n.type === 'tense' ? n.fields.tense : ''))
+  const cardsByNote = groupBy(cards, (c) => c.noteId)
   return ALL_TENSES.map((tense) => {
     const ns = byTense.get(tense) ?? []
     const cs = ns.flatMap((n) => cardsByNote.get(n.id) ?? []).filter((c) => !c.suspended)
     const mastery = cs.length ? cs.reduce((s, c) => s + Math.min(1, c.fsrs.stability / 21), 0) / cs.length : 0
     const due = cs.filter((c) => c.unlocked && c.fsrs.state !== 0 && c.fsrs.due < dayEndTs && (c.buriedUntil ?? 0) <= now).length
     return { tense, items: ns.length, mastery, due }
+  })
+}
+
+export interface DayCount {
+  /** "YYYY-MM-DD" study day. */
+  day: string
+  count: number
+}
+
+/** Reviews due on each of the next `days` study days (day 0 includes everything overdue). */
+export function dueForecast(cards: readonly Card[], liveNoteIds: ReadonlySet<string>, now: number, rolloverHour: number, days = 14): DayCount[] {
+  const out: DayCount[] = Array.from({ length: days }, (_, i) => ({ day: shiftDayKey(now, rolloverHour, -i), count: 0 }))
+  const index = new Map(out.map((d, i) => [d.day, i]))
+  const today = dayKey(now, rolloverHour)
+  for (const c of cards) {
+    if (c.fsrs.state === 0 || !c.unlocked || c.suspended || !liveNoteIds.has(c.noteId)) continue
+    const key = c.fsrs.due <= now ? today : dayKey(c.fsrs.due, rolloverHour)
+    const i = index.get(key)
+    if (i !== undefined) out[i]!.count++
+  }
+  return out
+}
+
+/** Answers per study day over the last `days` days, oldest first. */
+export function activityByDay(logs: readonly ReviewLog[], now: number, rolloverHour: number, days = 90): DayCount[] {
+  const counts = new Map<string, number>()
+  for (const l of logs) {
+    const k = dayKey(l.timestamp, rolloverHour)
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  return Array.from({ length: days }, (_, i) => {
+    const day = shiftDayKey(now, rolloverHour, days - 1 - i)
+    return { day, count: counts.get(day) ?? 0 }
   })
 }
 

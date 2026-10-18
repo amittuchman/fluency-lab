@@ -1,6 +1,7 @@
 import { repos } from '../../data'
 import { dayEnd, dayStart } from '../../domain/scheduler'
-import { maturity, streak, tagStats, tenseStats, timeStudied, trueRetention } from '../../domain/stats'
+import { activityByDay, dueForecast, maturity, streak, tagStats, tenseStats, timeStudied, trueRetention } from '../../domain/stats'
+import { ActivityHeatmap, ForecastChart } from '../components/Charts'
 import { tenseLabel } from '../../domain/tags'
 import { Empty, PageHeader, Stat } from '../components/ui'
 import { formatDate, formatDuration, pct } from '../format'
@@ -36,6 +37,8 @@ export function Stats() {
         .slice(0, 20),
       tenses: tenseStats(notes, liveCards, now, dayEnd(now, settings.rolloverHour)),
       quizzes: [...quizzes].reverse().slice(0, 10),
+      forecast: dueForecast(cards, liveIds, now, settings.rolloverHour),
+      activity: activityByDay(logs, now, settings.rolloverHour),
     }
   }, [settings.rolloverHour])
 
@@ -59,6 +62,17 @@ export function Stats() {
         <Stat label="Streak" value={`${data.streak} d`} />
         <Stat label="True retention" value={pct(data.retention.rate)} sub={`last 30 days · ${data.retention.n} reviews`} />
         <Stat label="Time studied" value={formatDuration(data.today.time)} sub={`${formatDuration(data.time30)} in 30 days`} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="card">
+          <h2 className="font-medium">Due in the next 14 days</h2>
+          <ForecastChart data={data.forecast} />
+        </section>
+        <section className="card">
+          <h2 className="font-medium">Activity, last 90 days</h2>
+          <ActivityHeatmap data={data.activity} />
+        </section>
       </div>
 
       <section className="card">

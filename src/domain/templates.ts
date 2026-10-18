@@ -70,7 +70,9 @@ export function findTermInExample(term: string, example: string): TermMatch | nu
   const exact = words.map(escapeRe).join('\\s+')
   const inflected = [escapeRe(stem) + double + suffix, ...words.slice(1).map(escapeRe)].join('\\s+')
   for (const pattern of [exact, inflected]) {
-    const re = new RegExp(`(^|[^\\p{L}])(${pattern})(?![\\p{L}])`, 'iu')
+    // A plain letter class instead of \p{L}: Unicode-property regexes are slow to compile, and this one is
+    // built per term (it dominated the time of a 5,000-line import).
+    const re = new RegExp(`(^|[^A-Za-z\\u00C0-\\u024F])(${pattern})(?![A-Za-z\\u00C0-\\u024F])`, 'i')
     const m = re.exec(example)
     if (m) {
       const start = m.index + m[1]!.length
