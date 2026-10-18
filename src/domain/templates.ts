@@ -2,7 +2,7 @@ import { clozeCount, clozePlain, hasCloze, parseCloze } from './cloze'
 import { lcsPairs, tokenize } from './checker'
 import { emptyFsrs } from './scheduler'
 import type { Card, Note, NoteContent, NoteType } from './types'
-import { hashString, newId } from './util'
+import { hashString } from './util'
 
 export interface TemplateSpec {
   template: string
@@ -222,7 +222,8 @@ export function isSelfGraded(template: string): boolean {
 
 export function newCard(noteId: string, spec: TemplateSpec, now: number): Card {
   return {
-    id: newId(),
+    // Deterministic: two devices that create the same note's card independently produce the same id.
+    id: `${noteId}:${spec.template}`,
     noteId,
     template: spec.template,
     order: spec.order,
@@ -284,7 +285,7 @@ export function reconcileCards(note: Pick<Note, 'id'> & NoteContent, existing: C
         ...cur,
         order: spec.order,
         contentHash: spec.contentHash,
-        ...(changed ? { fsrs: emptyFsrs(now), leech: false } : {}),
+        ...(changed ? { fsrs: emptyFsrs(now), leech: false, resetAt: now } : {}),
         unlocked: cur.unlocked || spec.order === 0,
       }
       update.push(next)

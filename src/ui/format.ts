@@ -11,3 +11,12 @@ export function formatDuration(ms: number): string {
 export function pct(x: number | null): string {
   return x === null || Number.isNaN(x) ? '–' : `${Math.round(x * 100)}%`
 }
+
+/** "just now", "5 min ago", "3 h ago", or a date. */
+export function formatAgo(ts: number, now = Date.now()): string {
+  const min = Math.floor((now - ts) / 60_000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h ago`
+  return formatDate(ts)
+}

@@ -2,7 +2,8 @@
 
 A personal, offline-first spaced-repetition app for spoken English. Paste the Study Package from a voice
 session with an AI coach, drill it before the next session, and keep it long term with FSRS scheduling.
-Everything stays in your browser (IndexedDB); there is no account and no server.
+Everything lives in your browser (IndexedDB) and works offline. An account is optional: sign in with an
+emailed code to sync between devices (Supabase); without one the app is local-only.
 
 ## Run it
 
@@ -10,7 +11,7 @@ Requires Node 20+.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://localhost:5173/fluency-lab/
 npm run build      # production build in dist/
 npm test           # unit + component tests (Vitest)
 npm run test:e2e   # end-to-end test (Playwright, uses the installed Microsoft Edge)
@@ -79,6 +80,36 @@ reminder after 7 days without a backup.
 Data belongs to one browser on one device and one web address. To move it (e.g. laptop → phone), export on one
 and restore on the other.
 
+## Sync between devices (optional)
+
+**Settings → Sync between devices**: type your email, then the 6-digit code from the email. Do the same on
+each device (the installed phone app has its own storage, which is why it's a code and not a link).
+
+- The device's own database stays the source of truth; sync copies changes both ways in the background: on
+  start, when the connection returns, when the app comes back to the foreground, after every session and quiz,
+  ~20 s after other changes, and every 5 minutes. **Sync now** forces it. The badge shows Synced / Syncing… /
+  Offline / Sync error / Local only.
+- Conflicts: notes, packages and settings keep the most recent edit; a card keeps the state with the most recent
+  review; review history and quiz results are only ever added (an undo removes the one review). Deleting moves
+  things to Trash on every device; nothing is hard-deleted in the cloud.
+- The first sign-in on a device **merges**: if the device and the account both have data, you get both.
+- Signing out keeps everything on the device; changes made while signed out upload at the next sign-in.
+- JSON backups still work exactly as before and are independent of sync.
+
+### Supabase setup (one time)
+
+1. **SQL Editor → New query**, paste [`supabase/schema.sql`](supabase/schema.sql), **Run**. It creates the six
+   tables (`notes`, `cards`, `review_logs`, `packages`, `quiz_results`, `settings`) with Row Level Security:
+   each user can read and write only their own rows, anonymous visitors nothing, and rows can't be hard-deleted.
+2. **Authentication → Emails (Templates)**: in both **Magic Link** and **Confirm signup**, show the code
+   (`{{ .Token }}`) instead of the link.
+3. **Authentication → URL Configuration**: Site URL `https://amittuchman.github.io/fluency-lab/`; redirect URLs
+   `https://amittuchman.github.io/fluency-lab/**`, `http://localhost:5173/**`, `http://localhost:4173/**`.
+
+The app uses only the project URL and the **publishable** key (`src/sync/config.ts`, overridable with
+`VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`). These are public by design; Row Level Security protects
+the data. Never put a secret or service-role key in the app or the repo.
+
 ## Deploy to GitHub Pages (use it on your phone)
 
 The repository includes `.github/workflows/deploy.yml`, which builds and publishes the app on every push to `main`.
@@ -95,12 +126,12 @@ The repository includes `.github/workflows/deploy.yml`, which builds and publish
    step 3). The site is at `https://<your-user>.github.io/fluency-lab/`.
 5. On the phone, open that address once while online, then install it: **Android Chrome:** menu → *Add to
    Home screen / Install app*. **iPhone Safari:** Share → *Add to Home Screen*. After that it works offline.
-6. Move your data: laptop **Settings → Export backup**, send the file to the phone, phone **Settings → Restore
-   from file → Replace everything** (or Merge).
+6. Move your data: sign in to sync on both devices (above), or laptop **Settings → Export backup**, send the
+   file to the phone, phone **Settings → Restore from file**.
 
 Other static hosts work too (build command `npm run build`, output `dist`): **Netlify** (new site from the
-repo) or **Vercel** (framework preset "Vite"). The app uses relative paths and hash routing, so no rewrite rules
-are needed anywhere.
+repo) or **Vercel** (framework preset "Vite"). The build is configured for the `/fluency-lab/` sub-path
+(`base` in `vite.config.ts`); set it to `'/'` for a domain root. Hash routing means no rewrite rules are needed.
 
 ## Project docs
 

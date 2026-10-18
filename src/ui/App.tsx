@@ -6,7 +6,9 @@ import { initialize } from '../data/services'
 import { META } from '../data/repos'
 import type { CheatSheetOverrides } from '../domain/cheatsheets'
 import type { Settings as SettingsT } from '../domain/types'
+import { startSync } from '../sync/manager'
 import { ShortcutsOverlay } from './components/Shortcuts'
+import { SyncBadge } from './components/SyncBadge'
 import { Empty, Kbd } from './components/ui'
 import { CheatSheetContext, openShortcuts, SettingsContext } from './hooks'
 import { speechRecognitionSupported } from './speech'
@@ -62,7 +64,11 @@ export function App() {
 
   useEffect(() => {
     initialize(repos)
-      .then(() => setReady(true))
+      .then(() => {
+        setReady(true)
+        // Restores a saved account session (if any) and starts background sync. Local-only otherwise.
+        void startSync()
+      })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
     // Ask the browser not to evict our IndexedDB data. Silently ignored where unsupported.
     void navigator.storage?.persist?.()
@@ -136,7 +142,8 @@ function Layout({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <aside className="hidden w-52 shrink-0 border-r border-slate-200 p-3 md:block dark:border-slate-800">
-        <div className="mb-4 px-3 pt-1 text-lg font-semibold">Fluency Lab</div>
+        <div className="mb-1 px-3 pt-1 text-lg font-semibold">Fluency Lab</div>
+        <SyncBadge className="mb-3 ml-1" />
         <nav className="space-y-0.5" aria-label="Main">
           {nav.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} className={navClass}>
@@ -150,6 +157,9 @@ function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       <main id="main" className="min-w-0 flex-1 px-4 pb-24 pt-4 md:px-8 md:pb-8 md:pt-6">
+        <div className="-mt-2 mb-2 flex justify-end md:hidden">
+          <SyncBadge />
+        </div>
         <Suspense fallback={<p className="muted">Loading…</p>}>{children}</Suspense>
       </main>
       <ShortcutsOverlay />

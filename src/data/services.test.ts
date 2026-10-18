@@ -71,7 +71,10 @@ describe('reviews', () => {
 
     const undone = await undoLastReview(repos)
     expect(undone?.id).toBe(out.log.id)
-    expect(await repos.cards.get(first!.id)).toEqual(before)
+    // The exact pre-review state comes back; resetAt marks it as newer than the undone review for sync.
+    const { resetAt, ...restored } = (await repos.cards.get(first!.id))!
+    expect(restored).toEqual(before)
+    expect(resetAt).toBeGreaterThan(0)
     const sib2 = await repos.cards.get(second!.id)
     expect(sib2!.unlocked).toBe(false)
     expect(sib2!.buriedUntil).toBeNull()

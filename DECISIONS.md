@@ -153,3 +153,45 @@ Non-obvious choices, newest last. Each entry: what, and why.
     and switch Pages to "GitHub Actions" (see README).
 61. **Restoring a backup counts as having a backup** from the file's export time, so the "never backed up"
     reminder doesn't appear right after a restore (found in the final end-to-end pass).
+
+## Cloud sync (Supabase)
+
+62. **Dexie stays the source of truth; sync sits under the repositories.** Every repository write stamps the
+    record with `_mtime` and queues it in a `dirty` outbox table (Dexie v2), in the same transaction. Screens are
+    unchanged. The sync engine pulls (merging record by record) and then pushes the outbox; an outbox entry is
+    cleared only if the record didn't change again while the push ran.
+63. **Cloud rows are `{id, user_id, data, updated_at, deleted_at}`** with the record in `data`. `updated_at` is
+    *server* time set by a trigger and is only the pull cursor (device clocks don't matter for "what's new"). The
+    conflict clock travels in `data._clock` and is compared in the app *and* in the database trigger, so an old
+    device can never overwrite newer cloud data, even if two devices push at once.
+64. **Conflict clocks:** notes, packages, settings: last write (`_mtime`). Cards: latest review first
+    (max of `lastReview` and `resetAt`), then last write, as requested. `resetAt` is set when an edit resets a card
+    and when a review is undone, so neither is overwritten by the older review state.
+65. **Review logs and quiz results are append-only** (insert-if-absent; the trigger keeps `data` immutable).
+    Undo is the one exception: it soft-deletes the log (`deleted_at`), and other devices drop it.
+66. **Soft deletes only.** Trash syncs as the note's `deletedAt` (row `deleted_at` set). Permanent deletes sync as
+    tombstones (`data._tombstone`, `deleted_at`). The database refuses DELETE/TRUNCATE for app users.
+67. **First sign-in on a device is a merge:** everything local is queued, everything in the cloud is pulled, and
+    each record is resolved by the rules above. Nothing local is dropped unless the cloud has a *newer* deletion.
+68. **New card ids are deterministic** (`noteId:template`), so two devices that create a note's cards on their own
+    (template migrations) produce the same ids. Older random-id twins are collapsed on pull: the version with the
+    latest review wins and the other is deleted everywhere.
+69. **Email OTP (6-digit code), not a magic link**: the installed PWA has separate storage from the browser, so a
+    link would sign in the wrong one. The session is persisted in localStorage (`fluency-lab-auth`) and refreshed
+    automatically. Sign-out is per device and keeps local data.
+70. **supabase-js loads lazily** (only when a saved session exists or the user signs in): local-only users don't
+    download it and nothing contacts Supabase.
+71. **Sync triggers:** app start, `online`, back to the foreground (if >1 min since the last sync), end of each
+    study session and quiz, 20 s after other local changes, every 5 minutes while visible, and "Sync now".
+72. **Sync state is per account and per device** (`meta` key `sync:<userId>`): never exported in backups and kept
+    when a backup "replace" wipes the data. A replace is itself synced: what's not in the backup is deleted in
+    the cloud too (the user confirmed a replace).
+73. **Only the publishable key ships in the client** (`src/sync/config.ts`); it's public by design. RLS
+    (`auth.uid() = user_id`, `to authenticated`, `force row level security`, anon revoked) protects the data.
+74. **Tests run the real schema in real Postgres** (PGlite, with Supabase's `auth.uid()` and roles stubbed):
+    RLS isolation, no anon access, no hard deletes, newer-clock-wins and append-only triggers, plus two simulated
+    devices syncing through it (first-login union, last-write-wins both orders, latest-review-wins for cards,
+    offline then online, duplicate pushes, Trash / permanent delete / undo, edit resets, twin cards, account
+    isolation, incremental pulls).
+75. **Supabase sign-in is tested by the user, not by me**: signing in to a remote service with the user's email
+    code is something only the user should do. Everything below sign-in is covered by the tests above.

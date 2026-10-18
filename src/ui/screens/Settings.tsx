@@ -6,6 +6,7 @@ import { META } from '../../data/repos'
 import { validateBackup, type BackupValidation } from '../../domain/backup'
 import type { Settings as SettingsT } from '../../domain/types'
 import { saveBackupFile } from '../backupFile'
+import { SyncSettings } from '../components/SyncSettings'
 import { Banner, Button, Confirm, PageHeader } from '../components/ui'
 import { formatDate } from '../format'
 import { useRepoQuery, useSettings } from '../hooks'
@@ -52,6 +53,7 @@ export function Settings() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <PageHeader title="Settings" />
+      <SyncSettings />
 
       <section className="card divide-y divide-slate-100 py-1 dark:divide-slate-800">
         <h2 className="pb-2 pt-2 font-medium">Study</h2>

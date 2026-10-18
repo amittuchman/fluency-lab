@@ -100,6 +100,11 @@ export interface Card {
   /** Set by the quiz "put misses at the front" action; cleared after the next review. */
   priority: boolean
   createdAt: number
+  /**
+   * When the schedule was reset (note content edited) or restored (undo). Sync orders card versions by
+   * max(last review, resetAt), so a reset or an undo is not overwritten by the older review state.
+   */
+  resetAt?: number
 }
 
 /** 1 Again, 2 Hard, 3 Good, 4 Easy (same values as ts-fsrs Rating). */

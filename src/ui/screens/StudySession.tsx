@@ -13,6 +13,7 @@ import { EditNoteModal } from '../components/EditNoteModal'
 import { StudyCard, type CardAnswer } from '../components/StudyCard'
 import { Banner, Button, Empty, Kbd, TagList, TypeBadge } from '../components/ui'
 import { formatDuration, pct } from '../format'
+import { syncNow } from '../../sync/manager'
 import { isTypingTarget, useCheatSheets, useSettings } from '../hooks'
 import { speechRecognitionSupported, useVoices } from '../speech'
 
@@ -323,6 +324,10 @@ export function StudySession({ source }: { source: SessionSource }) {
 }
 
 function Summary({ state, source, capReached, onUndo }: { state: State; source: SessionSource; capReached: boolean; onUndo?: () => void }) {
+  // A finished session is a natural moment to sync (no-op when signed out).
+  useEffect(() => {
+    void syncNow()
+  }, [])
   const r = state.results
   const correct = r.filter((x) => x.correct).length
   const misses = new Map<string, { miss: number; total: number }>()

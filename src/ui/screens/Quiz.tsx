@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { repos } from '../../data'
 import { markForRelearn } from '../../data/services'
+import { syncNow } from '../../sync/manager'
 import { buildPrompt, type Prompt } from '../../domain/prompt'
 import { FORMAT_LABELS, pickQuizQuestions, quizTagTrends, type QuizQuestion } from '../../domain/quiz'
 import { dayEnd } from '../../domain/scheduler'
@@ -213,6 +214,7 @@ function QuizRun({ questions, config, startedAt, onFinish }: { questions: QuizQu
     await repos.quizzes.add(result)
     const misses = qs.filter((q) => !q.correct).map((q) => q.cardId)
     if (misses.length) await markForRelearn(repos, misses, false)
+    void syncNow()
     onFinish(result, new Map(questions.map((q, i) => [q.card.id, prompts[i]!])))
   }
 

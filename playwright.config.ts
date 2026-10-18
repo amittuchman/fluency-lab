@@ -5,10 +5,10 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: 'e2e',
   timeout: 60_000,
-  use: { baseURL: 'http://localhost:4174', channel: 'msedge' },
+  use: { baseURL: 'http://localhost:4174/fluency-lab/', channel: 'msedge' },
   webServer: {
     command: 'npm run build && npm run preview -- --port 4174 --strictPort',
-    url: 'http://localhost:4174',
+    url: 'http://localhost:4174/fluency-lab/',
     reuseExistingServer: false,
     timeout: 180_000,
   },
