@@ -5,8 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  // Relative base so the build works from any sub-path (GitHub Pages) as well as a domain root.
-  base: './',
+  // Served from GitHub Pages at /fluency-lab/.
+  base: '/fluency-lab/',
   // The project lives in a OneDrive folder, where every file is a reparse point. Rolldown's resolver
   // treats those like symlinks and fails to resolve packages unless symlinks are left as-is.
   resolve: { preserveSymlinks: true },
