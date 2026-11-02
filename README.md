@@ -2,8 +2,8 @@
 
 A personal, offline-first spaced-repetition app for spoken English. Paste the Study Package from a voice
 session with an AI coach, drill it before the next session, and keep it long term with FSRS scheduling.
-Everything lives in your browser (IndexedDB) and works offline. An account is optional: sign in with an
-emailed code to sync between devices (Supabase); without one the app is local-only.
+Everything lives in your browser (IndexedDB) and works offline. An account is optional: sign in with
+email and password to sync between devices (Supabase); without one the app is local-only.
 
 ## Run it
 
@@ -23,13 +23,30 @@ npm run check      # lint + typecheck + unit tests
 1. **Add → Paste a package.** Paste the coach's package (or open a .txt / .json file). Fix flagged lines in the
    preview, choose what to do with duplicates, press **Confirm and save**. **Copy import template** gives you a
    blank block to hand to the coach.
-2. **Home → Drill this package** before your next voice session. Every card of the package loops until you
-   answer it correctly twice in a row ("X/Y ready"). Drills ignore the daily limits and the unlock chain.
+2. **Home → Drill this package** before your next voice session. Every item of the package loops until you
+   answer it correctly twice in a row ("X/Y ready"). Drills ignore the daily limits.
 3. **Home → Start session** every day: due reviews first, then new cards (25/day by default).
 4. **Tense Lab** for the 12 tenses: click a cell to drill one tense, or pick 2–3 for a contrast drill.
 5. **Quiz**, **Weak spots**, **Speak** and **Stats** when you want to test yourself or see where you stand.
 
-Each item becomes several cards that unlock as you learn it: recognize → fill the gap → produce → hear/say.
+### Exercises and levels
+
+Each item is one card. FSRS decides *when* it comes back; the item's **level** decides *what* you're asked:
+
+| Level | Idea | @vocab | @fix | @tense | @natural | @sentence | @cloze |
+|---|---|---|---|---|---|---|---|
+| L1 | recognize | flashcard (word + its example → meaning) | choose the correct version | choose the form | choose the more natural one | English → meaning | choose (with `dist:`) |
+| L2 | guided | meaning → choose the word | spot the wrong part | fill the verb | fill the key phrase | Hebrew → English, first letters given | gap with hint |
+| L3 | free production | meaning → type the word | correct your sentence | rewrite with the right tense | upgrade your version | Hebrew → English | gap, no hint |
+| L4 | transfer / spot | your own sentence (self-check) | same rule, new sentence; or find the mistake | same tense, new sentence; or find the mistake | find the unnatural one | say it aloud (speech) | gap, no hint |
+| L5 | no support | Hebrew → word | Hebrew → sentence | Hebrew → sentence | situation → say it | situation → say it | Hebrew → sentence |
+
+- Up a level after 2 clean answers in a row, down after 2 mistakes in a row. A mistake brings the item back soon (FSRS).
+- After 7+ days away, the first exercise is a recall (produce the answer), whatever the level.
+- Items with the same `pattern:` (or tense, or rule) come one after another in a session.
+- If an exercise needs data the item doesn't have (`he:`, `prompt:`, `also:`…), the nearest level that works is used.
+- Typed answers forgive small typos (and say so), never a grammar change or the word the exercise is about.
+  The answer and the rule are shown after every attempt.
 
 ### Keys
 
@@ -51,22 +68,32 @@ One item per line, segments separated by ` | `. Blank lines and `//` comments ar
 # Package: 2026-10-19 – Economics debate
 @vocab reluctant | unwilling and hesitant | He was reluctant to commit. | he: מסויג | pos: adj | #adjectives
 @sentence The trade-off isn't as clear-cut as it looks. | he: … | #natural-phrasing
-@fix I very agree with you. => I completely agree with you. | rule: "very" cannot modify a verb | #adverbs
+@fix I very agree with you. => I completely agree with you. | rule: "very" cannot modify a verb | he: אני מסכים איתך לגמרי. | pattern: very + verb | also: I very like it. => I really like it. | #adverbs
 @natural I think this solution is very good. => I think this approach makes a lot of sense. | note: … | #natural-phrasing
 @tense I {{have been working::work}} here for five years. | tense: present-perfect-continuous | why: ongoing action up to now | #tenses
-@cloze The central bank {{raised//put up::raise}} rates last week. | #economics
+@cloze The central bank {{raised//put up::raise}} rates last week. | dist: rose; has risen | #economics
 ```
 
 - `@vocab term | definition | example…`: further un-keyed segments are more examples.
 - Keyed segments: `he:` `pos:` `rule:` `note:` `tense:` `why:` `coll:` (collocations, `;`-separated).
+- Optional on any item (old blocks without them still work):
+  - `he:` Hebrew meaning (enables Hebrew → English exercises)
+  - `prompt:` a situation where you'd say it (enables "what would you say?")
+  - `rule:` a one-line rule (required on `@fix`, optional elsewhere; shown after every answer)
+  - `dist:` wrong options for multiple choice, `;`-separated
+  - `also:` another sentence with the same point: `wrong => right` on `@fix`, a `{{answer::verb}}` sentence on `@tense`.
+    Repeat `also:` or separate with `;`.
+  - `pattern:` a name for the mistake (saved as the tag `pattern:<name>`): items that share it are practiced together
+  - `#spelling` on a `@vocab` line: write the word exactly (otherwise typos are forgiven)
 - Tense names: "present perfect continuous", "present-perfect-continuous", "Present Perfect Progressive"… all work.
 - `#tags` are saved lowercase and hyphenated; tense names become `tense:<name>`.
-- Cloze: `{{answer}}`, `{{answer::hint}}`, alternatives `{{a//b}}`. Each `{{…}}` in an `@cloze` line is its own card.
+- Cloze: `{{answer}}`, `{{answer::hint}}`, alternatives `{{a//b}}`. Only marked words are ever blanked; several
+  blanks in one `@cloze` line take turns.
   On `@tense` lines put the base verb as the hint: `{{have been working::work}}`.
 - `->` works like `=>`; curly quotes are straightened.
 - JSON: an array of objects with the same field names (`type`, `term`, `definition`, `examples`, `he`, `pos`,
   `collocations`, `notes`, `text`, `wrong`, `right`, `rule`, `mine`, `natural`, `note`, `sentence`, `tense`,
-  `why`, `tags`), or `{ "package": "…", "items": [ … ] }`.
+  `why`, `tags`, plus `prompt`, `distractors`, `also` and `pattern`), or `{ "package": "…", "items": [ … ] }`.
 
 The in-app **Format reference** page (Add → Format reference) has the same information.
 

@@ -4,10 +4,9 @@ import { repos } from '../../data'
 import { reviewCard, setCardSuspended, undoLastReview } from '../../data/services'
 import { allSignals } from '../../domain/cheatsheets'
 import { answerDrill, startDrill, undoDrill, type DrillState } from '../../domain/drill'
-import { buildPrompt } from '../../domain/prompt'
+import { buildPrompt, createPool, EXERCISE_LABELS, type ExerciseId } from '../../domain/exercises'
 import { buildDailyQueue, roundRobin } from '../../domain/queue'
 import { dayEnd, dayStart, formatInterval, Scheduler } from '../../domain/scheduler'
-import { templateLabel } from '../../domain/templates'
 import type { Card, Grade, Note } from '../../domain/types'
 import { EditNoteModal } from '../components/EditNoteModal'
 import { StudyCard, type CardAnswer } from '../components/StudyCard'
@@ -105,11 +104,18 @@ export function StudySession({ source }: { source: SessionSource }) {
     !!state && source.kind === 'daily' && settings.sessionCap.kind === 'minutes' && Date.now() - state.startedAt >= settings.sessionCap.value * 60_000 && state.results.length > 0
   const finished = !!state && (!card || !note || capReached)
 
+  // The other items: distractors for multiple choice, and sentences with the same mistake pattern.
+  const noteMap = state?.notes
+  const pool = useMemo(() => createPool(noteMap ? [...noteMap.values()] : []), [noteMap])
+
   const prompt = useMemo(
-    () => (card && note ? buildPrompt(note, card, { promptLanguage: settings.promptLanguage, audio: audioOn, speech: speechRecognitionSupported() }) : null),
-    // Rebuild when the card's review count changes (chunk rotation) or after an edit.
+    () =>
+      card && note
+        ? buildPrompt(note, card, { promptLanguage: settings.promptLanguage, audio: audioOn, speech: speechRecognitionSupported(), now: Date.now(), pool })
+        : null,
+    // Rebuild when the card's review count or level changes, or after an edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [card?.id, card?.fsrs.reps, note, settings.promptLanguage, state?.attempt, audioOn],
+    [card?.id, card?.fsrs.reps, card?.level, note, settings.promptLanguage, state?.attempt, audioOn, pool],
   )
 
   const intervals = useMemo(() => {
@@ -135,6 +141,7 @@ export function StudySession({ source }: { source: SessionSource }) {
           responseMs: answer.responseMs,
           mode: source.kind === 'drill' ? 'drill' : 'session',
           userAnswer: answer.userAnswer,
+          ...(prompt ? { exercise: prompt.exercise } : {}),
         })
         setState((s) => {
           if (!s) return s
@@ -157,7 +164,7 @@ export function StudySession({ source }: { source: SessionSource }) {
         setBusy(false)
       }
     },
-    [state, card, busy, source.kind, settings.rolloverHour],
+    [state, card, busy, source.kind, settings.rolloverHour, prompt],
   )
 
   const undo = useCallback(async () => {
@@ -264,7 +271,13 @@ export function StudySession({ source }: { source: SessionSource }) {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="flex items-center gap-2">
           <TypeBadge type={note!.type} />
-          <span className="muted">{templateLabel(card!.template)}</span>
+          <span className="muted">{prompt ? EXERCISE_LABELS[prompt.exercise as ExerciseId] : ''}</span>
+          {prompt && (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium tabular-nums dark:bg-slate-800" title="Level: L1 recognize … L5 produce without support">
+              L{prompt.level}
+            </span>
+          )}
+          {prompt?.afterBreak && <span className="text-xs text-amber-700 dark:text-amber-300">after a break: recall first</span>}
         </div>
         <span className="muted tabular-nums" aria-live="polite">
           {source.kind === 'drill' ? `${source.title}: ` : ''}

@@ -98,7 +98,15 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
   const canPlay = audioOn && (revealed || !!prompt.audioPrompt)
 
   const suggested: Grade | null =
-    prompt.kind === 'flip' ? null : prompt.kind === 'choice' ? (chosen === prompt.correctIndex ? 3 : 1) : check ? suggestedGrade(check.verdict) : null
+    prompt.kind === 'flip' || (prompt.kind === 'typed' && prompt.selfCheck)
+      ? null
+      : prompt.kind === 'choice'
+        ? chosen === prompt.correctIndex
+          ? 3
+          : 1
+        : check
+          ? suggestedGrade(check.verdict)
+          : null
 
   // Audio that is the question itself (dictation, "listen then type") plays as the card appears.
   // Browsers that require a user gesture (iOS) may block this; the Play button is always there.
@@ -118,28 +126,33 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
     if (prompt.kind !== 'speak' || revealed) return
     const result = checkSpeech(alternatives, prompt.target)
     setHeard(result)
-    setCheck({ verdict: result.verdict, diff: result.diff, reference: prompt.target })
+    setCheck({ verdict: result.verdict, diff: result.diff, reference: prompt.target, typos: [], similarity: result.similarity })
     setAlmostNote(result.verdict === 'almost' ? 'Close: most words match' : null)
     reveal()
   }
 
   const submitTyped = () => {
     if (prompt.kind === 'speak' && !revealed) {
-      const result = checkAnswer(text, [prompt.target], { typoTolerance: true })
+      const result = checkAnswer(text, [prompt.target], { mode: 'meaning' })
       setCheck(result)
-      setAlmostNote(result.verdict === 'almost' ? 'Almost: one-letter typo, accepted' : null)
+      setAlmostNote(verdictNote(result))
       reveal()
       return
     }
     if (prompt.kind !== 'typed' || revealed) return
-    const result = checkAnswer(text, prompt.accepted, { typoTolerance: prompt.typoTolerance })
+    if (prompt.selfCheck) {
+      // Free answer (e.g. your own sentence): no automatic verdict; compare with the examples and grade.
+      reveal()
+      return
+    }
+    const result = checkAnswer(text, prompt.accepted, prompt.check)
     const twin = result.verdict === 'wrong' && prompt.tenseInfo ? acceptedTwin(text, prompt.tenseInfo) : null
     if (twin) {
       setCheck({ ...result, verdict: 'almost' })
       setAlmostNote(`Also correct here: the ${tenseLabel(twin).toLowerCase()} works with this duration. The target form is the ${tenseLabel(prompt.tenseInfo!.tense).toLowerCase()}.`)
     } else {
       setCheck(result)
-      setAlmostNote(result.verdict === 'almost' ? 'Almost: one-letter typo, accepted' : null)
+      setAlmostNote(verdictNote(result))
     }
     reveal()
   }
@@ -229,6 +242,7 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
             {prompt.front}
           </p>
           {prompt.frontSub && <p className="muted mt-1 text-sm italic">{prompt.frontSub}</p>}
+          {prompt.example && <p className="mx-auto mt-4 max-w-md text-base text-slate-600 dark:text-slate-300">“{prompt.example}”</p>}
         </div>
       )}
 
@@ -404,10 +418,18 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
           {prompt.kind === 'typed' && check?.verdict === 'wrong' && prompt.tenseInfo && (
             <TenseFeedback typed={text} info={prompt.tenseInfo} why={prompt.reveal.why} />
           )}
+          {prompt.kind === 'typed' && prompt.selfCheck && <p className="muted text-sm">Compare with the examples below, then grade yourself.</p>}
+          {prompt.kind === 'choice' && chosen !== prompt.correctIndex && <p className="text-sm">Correct choice: “{prompt.options[prompt.correctIndex]}”</p>}
           <RevealDetails
             reveal={prompt.reveal}
             kind={prompt.kind}
-            showAnswer={prompt.kind === 'flip' || ((prompt.kind === 'typed' || prompt.kind === 'speak') && check?.verdict !== 'correct' && !prompt.context)}
+            back={prompt.kind === 'flip' ? prompt.back : undefined}
+            showAnswer={
+              prompt.kind === 'flip' ||
+              (prompt.kind === 'typed' && prompt.selfCheck !== true && check?.verdict !== 'correct' && !prompt.context) ||
+              (prompt.kind === 'speak' && check?.verdict !== 'correct') ||
+              prompt.kind === 'choice'
+            }
           />
           {prompt.reveal.tense && <CheatSheetDetails tense={prompt.reveal.tense} />}
           <GradeBar intervals={intervals} suggested={suggested} onGrade={finish} />
@@ -417,9 +439,16 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
   )
 }
 
+/** Extra words for a verdict: forgiven spelling slips, or "close to the model" for free answers. */
+function verdictNote(r: CheckResult): string | null {
+  if (r.verdict === 'correct' && r.typos.length) return `Correct (spelling: ${r.typos.map((t) => `${t.typed} → ${t.expected}`).join(', ')})`
+  if (r.verdict === 'almost') return 'Close to the model answer: compare below, then grade'
+  return null
+}
+
 function VerdictLine({ verdict, almostNote }: { verdict: 'correct' | 'almost' | 'wrong'; almostNote: string | null }) {
   const map = {
-    correct: ['Correct', 'text-emerald-700 dark:text-emerald-300'],
+    correct: [almostNote ?? 'Correct', 'text-emerald-700 dark:text-emerald-300'],
     almost: [almostNote ?? 'Almost', 'text-amber-700 dark:text-amber-300'],
     wrong: ['Not quite', 'text-rose-700 dark:text-rose-300'],
   } as const
@@ -443,10 +472,16 @@ function TenseFeedback({ typed, info, why }: { typed: string; info: { verb: stri
   )
 }
 
-function RevealDetails({ reveal, kind, showAnswer }: { reveal: RevealInfo; kind: Prompt['kind']; showAnswer: boolean }) {
+function RevealDetails({ reveal, kind, showAnswer, back }: { reveal: RevealInfo; kind: Prompt['kind']; showAnswer: boolean; back?: string }) {
+  const main = back ?? reveal.answer
+  const hebrew = /[֐-׿]/.test(main)
   return (
     <div className="space-y-2 text-sm">
-      {showAnswer && <p className="text-lg font-medium">{kind === 'flip' ? reveal.definition : reveal.answer}</p>}
+      {showAnswer && (
+        <p className={`text-lg font-medium ${hebrew ? 'he' : ''}`} dir="auto" lang={hebrew ? 'he' : undefined}>
+          {main}
+        </p>
+      )}
       {kind !== 'flip' && reveal.full && reveal.full !== reveal.answer && <p className="text-base">{reveal.full}</p>}
       {reveal.original && kind !== 'flip' && (
         <p>
@@ -476,7 +511,7 @@ function RevealDetails({ reveal, kind, showAnswer }: { reveal: RevealInfo; kind:
         </ul>
       )}
       {reveal.collocations && reveal.collocations.length > 0 && <p className="muted">Collocations: {reveal.collocations.join(' · ')}</p>}
-      {reveal.he && (
+      {reveal.he && reveal.he !== back && (
         <p className="he text-base" dir="auto" lang="he">
           {reveal.he}
         </p>

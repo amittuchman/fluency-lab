@@ -36,7 +36,8 @@ export function cleanContent(c: NoteContent): NoteContent {
   for (const [k, v] of Object.entries(c.fields)) {
     const val = typeof v === 'string' ? v.trim() : Array.isArray(v) ? v.map((s: string) => s.trim()).filter(Boolean) : v
     const empty = val === '' || (Array.isArray(val) && val.length === 0)
-    if (empty && !REQUIRED_FIELDS.has(k)) continue
+    // rule is required only on @fix; elsewhere it is optional exercise data.
+    if (empty && (!REQUIRED_FIELDS.has(k) || (k === 'rule' && c.type !== 'fix'))) continue
     fields[k] = val
   }
   return { type: c.type, fields } as unknown as NoteContent

@@ -4,10 +4,9 @@ import { repos } from '../../data'
 import { sampleText } from '../../data/sample'
 import { createNote, duplicateIndex, importPackage, type ImportItem, type ImportSummary } from '../../data/services'
 import { defaultPackageName, duplicateKey, parseImport, parseLine, primaryText, validateContent, type ParsedItem } from '../../domain/parser'
-import { buildPrompt } from '../../domain/prompt'
-import { emptyFsrs } from '../../domain/scheduler'
-import { templateLabel, templatesFor } from '../../domain/templates'
-import { NOTE_TYPES, type Card, type Note, type NoteContent } from '../../domain/types'
+import { buildPrompt, createPool, EXERCISE_LABELS, type ExerciseId } from '../../domain/exercises'
+import { newCard, templatesFor } from '../../domain/templates'
+import { NOTE_TYPES, type Level, type Note, type NoteContent } from '../../domain/types'
 import { NoteFields, TagsField } from '../components/NoteEditor'
 import { cleanContent, emptyContent, parseTags } from '../noteForm'
 import { Button, PageHeader, TagList, TypeBadge } from '../components/ui'
@@ -41,12 +40,13 @@ export function Add() {
 
 /** Blank block to hand to the AI coach (or fill in by hand): one example line per item type. */
 const IMPORT_TEMPLATE = `# Package: <date> – <topic>
+// Optional on any line: he: <Hebrew meaning> | prompt: <a situation> | rule: <short rule> | dist: <wrong option>; <wrong option> | pattern: <mistake name> | #spelling (vocab only)
 @vocab <term> | <English definition> | <example sentence using the term> | he: <Hebrew> | pos: <part of speech> | coll: <collocation>; <collocation> | #<tag>
-@sentence <key sentence> | he: <Hebrew> | #<tag>
-@fix <what I said> => <correct version> | rule: <the rule in one line> | #<tag>
-@natural <what I said> => <more natural version> | note: <why it sounds better> | #<tag>
-@tense <sentence with the verb as {{answer::base verb}}> | tense: <e.g. present-perfect-continuous> | why: <the time signal / reason> | #tenses
-@cloze <sentence with {{answer}} or {{answer//alternative::hint}}> | #<tag>
+@sentence <key sentence> | he: <Hebrew> | prompt: <situation where I'd say it> | #<tag>
+@fix <what I said> => <correct version> | rule: <the rule in one line> | he: <Hebrew> | pattern: <mistake name> | also: <another wrong sentence> => <its fix> | #<tag>
+@natural <what I said> => <more natural version> | note: <why it sounds better> | prompt: <situation> | #<tag>
+@tense <sentence with the verb as {{answer::base verb}}> | tense: <e.g. present-perfect-continuous> | why: <the time signal / reason> | also: <another sentence with {{answer::verb}}> | #tenses
+@cloze <sentence with {{answer}} or {{answer//alternative::hint}}> | dist: <wrong option>; <wrong option> | #<tag>
 `
 
 type DupChoice = 'skip' | 'update' | 'keep'
@@ -363,35 +363,23 @@ function QuickAdd() {
   const [added, setAdded] = useState<string | null>(null)
   const [count, setCount] = useState(0)
   const packages = useRepoQuery(() => repos.packages.all(), [])
+  const allNotes = useRepoQuery(() => repos.notes.all(), [])
   const clean = cleanContent(content)
   const errors = validateContent(clean).errors
 
   const previews = useMemo(() => {
     if (errors.length) return []
     const note = { ...clean, id: 'preview', tags: [], packageId: null, createdAt: 0, updatedAt: 0, suspended: false, deletedAt: null } as Note
-    return templatesFor(clean).map((spec) => {
-      const card: Card = {
-        id: `preview-${spec.template}`,
-        noteId: 'preview',
-        template: spec.template,
-        order: spec.order,
-        fsrs: emptyFsrs(0),
-        suspended: false,
-        buriedUntil: null,
-        leech: false,
-        unlocked: true,
-        contentHash: spec.contentHash,
-        priority: false,
-        createdAt: 0,
-      }
-      return { spec, prompt: buildPrompt(note, card, { promptLanguage: 'english' }) }
-    })
-  }, [clean, errors.length])
+    // The exercise each level would show for this item (with the library as distractor pool).
+    const card = newCard('preview', templatesFor(clean)[0]!, 0)
+    const pool = createPool(allNotes ?? [])
+    return ([1, 2, 3, 4, 5] as Level[]).map((level) => ({ level, prompt: buildPrompt(note, { ...card, level }, { promptLanguage: 'english', pool }) }))
+  }, [clean, errors.length, allNotes])
 
   const add = async () => {
     if (errors.length) return
     await createNote(repos, clean, parseTags(tags), packageId || null)
-    setAdded(`Added ${clean.type} · ${previews.length} cards`)
+    setAdded(`Added ${clean.type}`)
     setContent(emptyContent(content.type))
     setCount((n) => n + 1) // remount the fields so focus returns to the first one
   }
@@ -434,13 +422,16 @@ function QuickAdd() {
         </div>
       </form>
       <div className="space-y-2">
-        <h2 className="font-medium">Cards this creates</h2>
-        {previews.length === 0 && <p className="muted text-sm">Fill in the required fields to see the cards.</p>}
-        {previews.map(({ spec, prompt }) => (
-          <div key={spec.template} className="card py-3">
+        <h2 className="font-medium">Exercises by level</h2>
+        <p className="muted text-xs">The item starts at L1 and moves up after 2 clean answers, down after 2 mistakes in a row.</p>
+        {previews.length === 0 && <p className="muted text-sm">Fill in the required fields to see the exercises.</p>}
+        {previews.map(({ level, prompt }, i) => (
+          <div key={level} className="card py-3">
             <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="font-medium">{templateLabel(spec.template)}</span>
-              <span className="muted">{spec.order === 0 ? 'available now' : `unlocks after step ${spec.order}`}</span>
+              <span className="font-medium">
+                L{level} · {EXERCISE_LABELS[prompt.exercise as ExerciseId]}
+              </span>
+              {i > 0 && previews[i - 1]!.prompt.exercise === prompt.exercise && <span className="muted">same as L{level - 1} (more data would add a new form)</span>}
             </div>
             <p className="muted text-xs">{prompt.instruction}</p>
             <p className="mt-1 text-sm" dir="auto">

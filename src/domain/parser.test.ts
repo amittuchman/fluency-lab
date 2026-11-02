@@ -102,6 +102,48 @@ describe('JSON format', () => {
   })
 })
 
+describe('optional exercise data (backward compatible)', () => {
+  it('reads he, prompt, rule, dist, also and pattern on any item type', () => {
+    const r = parseImport(`@fix It depends of the price. => It depends on the price. | rule: "depend" takes "on" | he: זה תלוי במחיר. | pattern: depend on | also: We depend of them. => We depend on them. | also: It depends of you. => It depends on you. | #prepositions
+@vocab hedge | to reduce a risk | Firms hedge against inflation. | dist: hesitate; hurdle | prompt: You explain how a company protects itself | #spelling
+@natural I want to say something. => Can I jump in here? | prompt: You want to interrupt politely in a meeting | rule: a polite way to take the floor
+@cloze The bank {{raised::raise}} rates. | dist: rose; has risen | he: הבנק העלה את הריבית.
+@tense She {{has lived::live}} here since 2019. | tense: present perfect | also: I {{have known::know}} him for years.`)
+    expect(r.items.map((i) => [i.status, ...i.messages])).toEqual([['ok'], ['ok'], ['ok'], ['ok'], ['ok']])
+    expect(r.items[0]!.content!.fields).toMatchObject({
+      rule: '"depend" takes "on"',
+      he: 'זה תלוי במחיר.',
+      also: ['We depend of them. => We depend on them.', 'It depends of you. => It depends on you.'],
+    })
+    expect(r.items[0]!.tags).toEqual(['prepositions', 'pattern:depend-on'])
+    expect(r.items[1]!.content!.fields).toMatchObject({ distractors: ['hesitate', 'hurdle'], prompt: 'You explain how a company protects itself' })
+    expect(r.items[1]!.tags).toEqual(['spelling'])
+    expect(r.items[2]!.content!.fields).toMatchObject({ rule: 'a polite way to take the floor', prompt: 'You want to interrupt politely in a meeting' })
+    expect(r.items[3]!.content!.fields).toMatchObject({ distractors: ['rose', 'has risen'], he: 'הבנק העלה את הריבית.' })
+    expect(r.items[4]!.content!.fields).toMatchObject({ also: ['I {{have known::know}} him for years.'] })
+  })
+
+  it('the same data in JSON', () => {
+    const r = parseImport(
+      JSON.stringify([{ type: 'fix', wrong: 'a b c', right: 'a d c', rule: 'r', pattern: 'P1', prompt: 'p', distractors: ['x'], also: ['e f => e g'], he: 'ה' }]),
+    )
+    expect(r.items[0]!.status).toBe('ok')
+    expect(r.items[0]!.content!.fields).toMatchObject({ prompt: 'p', distractors: ['x'], also: ['e f => e g'], he: 'ה' })
+    expect(r.items[0]!.tags).toContain('pattern:p1')
+  })
+
+  it('warns when also: sentences are not in the item’s own shape', () => {
+    expect(parseImport('@fix a b => a c | rule: r | also: just a sentence').items[0]!.messages).toContain('Each "also:" for @fix needs "wrong => right".')
+    expect(parseImport('@tense I {{went::go}}. | tense: past simple | also: I go home.').items[0]!.messages).toContain(
+      'Each "also:" for @tense needs the verb marked as {{answer::verb}}.',
+    )
+  })
+
+  it('old blocks without any of it import exactly as before', () => {
+    expect(parseImport('@sentence It depends on you.').items[0]!.content).toEqual({ type: 'sentence', fields: { text: 'It depends on you.' } })
+  })
+})
+
 describe('duplicates', () => {
   it('normalizes the primary field', () => {
     const a = parseLine('@sentence The trade-off isn’t clear.', 1).content!

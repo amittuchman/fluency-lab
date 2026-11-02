@@ -1,4 +1,5 @@
 import { repos } from '../../data'
+import { isActiveCard } from '../../domain/templates'
 import { dayEnd, dayStart } from '../../domain/scheduler'
 import { activityByDay, dueForecast, maturity, streak, tagStats, tenseStats, timeStudied, trueRetention } from '../../domain/stats'
 import { ActivityHeatmap, ForecastChart } from '../components/Charts'
@@ -13,7 +14,8 @@ export function Stats() {
   const settings = useSettings()
   const data = useRepoQuery(async () => {
     const now = Date.now()
-    const [notes, cards, logs, quizzes] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.logs.all(), repos.quizzes.all()])
+    const [notes, allCards, logs, quizzes] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.logs.all(), repos.quizzes.all()])
+    const cards = allCards.filter(isActiveCard)
     const liveIds = new Set(notes.map((n) => n.id))
     const liveCards = cards.filter((c) => liveIds.has(c.noteId))
     const today = dayStart(now, settings.rolloverHour)

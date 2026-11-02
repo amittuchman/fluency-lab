@@ -1,7 +1,8 @@
 import { isReadyFromLogs } from '../domain/drill'
 import { duplicateKey } from '../domain/parser'
 import { dayEnd, dayStart, Scheduler } from '../domain/scheduler'
-import { cardsToUnlock, reconcileCards, TEMPLATE_VERSION } from '../domain/templates'
+import { nextLevel, levelOf } from '../domain/levels'
+import { cardsToUnlock, isActiveCard, reconcileCards, TEMPLATE_VERSION } from '../domain/templates'
 import {
   LEECH_LAPSES,
   type Card,
@@ -11,9 +12,9 @@ import {
   type Package,
   type ReviewLog,
   type ReviewMode,
-  type Settings,
 } from '../domain/types'
 import { groupBy, newId, uniq } from '../domain/util'
+import { exportBackup } from './backup'
 import { SCHEMA_VERSION } from './dexie'
 import { META, type Repos } from './repos'
 
@@ -26,21 +27,25 @@ export async function initialize(repos: Repos, now = Date.now()): Promise<void> 
   const expired = (await repos.notes.trashed()).filter((n) => n.deletedAt! < now - TRASH_DAYS * DAY_MS)
   if (expired.length) await purgeNotes(repos, expired.map((n) => n.id))
 
-  if ((await repos.meta.get<number>(META.templateVersion)) !== TEMPLATE_VERSION) {
-    const settings = await repos.settings.get()
-    const notes = await repos.notes.all()
+  const version = await repos.meta.get<number>(META.templateVersion)
+  if (version !== TEMPLATE_VERSION) {
+    const notes = [...(await repos.notes.all()), ...(await repos.notes.trashed())]
+    // Before the move to one card per item (v3), keep a full copy of the data on the device. Nothing is
+    // deleted by the migration, but this makes it undoable without the cloud or a manual backup.
+    if (version !== undefined && version < 3 && notes.length && !(await repos.meta.get(META.backupBeforeV3))) {
+      await repos.meta.set(META.backupBeforeV3, await exportBackup(repos, now))
+    }
     await repos.transaction(async () => {
-      for (const note of notes) await syncCards(repos, note, settings, now)
+      for (const note of notes) await syncCards(repos, note, now)
       await repos.meta.set(META.templateVersion, TEMPLATE_VERSION)
     })
   }
 }
 
-async function syncCards(repos: Repos, note: Note, settings: Settings, now: number): Promise<number> {
+async function syncCards(repos: Repos, note: Note, now: number): Promise<number> {
   const existing = await repos.cards.byNote(note.id)
-  const r = reconcileCards(note, existing, now, settings.unlockThresholds)
+  const r = reconcileCards(note, existing, now)
   if (r.add.length || r.update.length) await repos.cards.bulkPut([...r.add, ...r.update])
-  if (r.remove.length) await repos.cards.bulkDelete(r.remove)
   return r.add.length
 }
 
@@ -57,18 +62,16 @@ export async function createNote(
   packageId: string | null,
   now = Date.now(),
 ): Promise<Note> {
-  const settings = await repos.settings.get()
   const note = makeNote(content, tags, packageId, now)
   await repos.transaction(async () => {
     await repos.notes.put(note)
-    await syncCards(repos, note, settings, now)
+    await syncCards(repos, note, now)
   })
   return note
 }
 
 /** Edit a note in place. Cards whose content did not change keep their scheduling. */
 export async function updateNote(repos: Repos, noteId: string, content: NoteContent, tags: string[], now = Date.now()): Promise<Note> {
-  const settings = await repos.settings.get()
   return repos.transaction(async () => {
     const cur = await repos.notes.get(noteId)
     if (!cur) throw new Error('Note not found')
@@ -77,7 +80,7 @@ export async function updateNote(repos: Repos, noteId: string, content: NoteCont
     // Editing is how a leech gets fixed: clear the flag (it comes back after 4 more lapses).
     const leeches = (await repos.cards.byNote(noteId)).filter((c) => c.leech)
     if (leeches.length) await repos.cards.bulkPut(leeches.map((c) => ({ ...c, leech: false })))
-    await syncCards(repos, next, settings, now)
+    await syncCards(repos, next, now)
     return next
   })
 }
@@ -114,7 +117,6 @@ export async function importPackage(
   input: { name: string; sourceText: string; items: ImportItem[] },
   now = Date.now(),
 ): Promise<ImportSummary> {
-  const settings = await repos.settings.get()
   const pkg: Package = { id: newId(), name: input.name, createdAt: now, sourceText: input.sourceText }
   const summary: ImportSummary = { packageId: pkg.id, created: 0, updated: 0, skipped: 0, cards: 0 }
   await repos.transaction(async () => {
@@ -130,7 +132,7 @@ export async function importPackage(
         if (cur) {
           const next = { ...cur, ...item.content, tags: uniq([...cur.tags, ...item.tags]), packageId: pkg.id, updatedAt: now } as Note
           await repos.notes.put(next)
-          summary.cards += await syncCards(repos, next, settings, now)
+          summary.cards += await syncCards(repos, next, now)
           summary.updated++
           continue
         }
@@ -140,7 +142,7 @@ export async function importPackage(
     }
     await repos.notes.bulkPut(created)
     const cards: Card[] = []
-    for (const note of created) cards.push(...reconcileCards(note, [], now, settings.unlockThresholds).add)
+    for (const note of created) cards.push(...reconcileCards(note, [], now).add)
     await repos.cards.bulkPut(cards)
     summary.created = created.length
     summary.cards += cards.length
@@ -207,6 +209,8 @@ export interface ReviewInput {
   responseMs: number
   mode: ReviewMode
   userAnswer: string | null
+  /** The exercise shown and the item's level at the time (logged; the level is then updated). */
+  exercise?: string
   now?: number
   /** For tests: disable interval fuzz. */
   fuzz?: boolean
@@ -247,9 +251,12 @@ export async function reviewCard(repos: Repos, input: ReviewInput): Promise<Revi
       // A package drill ignores the unlock chain; a drilled card then stays in normal SRS. Undo restores
       // the snapshot (still locked), so this is not recorded in effects.
       unlocked: card.unlocked || input.mode === 'drill',
+      // Level: up after 2 clean answers in a row, down after 2 mistakes in a row (also in drills).
+      ...nextLevel(levelOf(card), grade),
     }
 
-    const siblings = (await repos.cards.byNote(card.noteId)).filter((c) => c.id !== card.id)
+    // Old per-exercise cards (before v3) are inactive: never buried, unlocked or touched.
+    const siblings = (await repos.cards.byNote(card.noteId)).filter((c) => c.id !== card.id && isActiveCard(c))
     const end = dayEnd(now, settings.rolloverHour)
     const buried: Card[] = siblings.filter((s) => (s.buriedUntil ?? 0) < end).map((s) => ({ ...s, buriedUntil: end }))
     const unlockIds = cardsToUnlock([updated, ...siblings], settings.unlockThresholds)
@@ -273,6 +280,8 @@ export async function reviewCard(repos: Repos, input: ReviewInput): Promise<Revi
       scheduled,
       cardBefore: card,
       effects: { buried: buried.map((c) => c.id), unlocked: unlockIds },
+      ...(input.exercise ? { exercise: input.exercise } : {}),
+      level: levelOf(card).level,
     }
     await repos.cards.bulkPut([updated, ...changed.values()])
     await repos.logs.add(log)
@@ -311,7 +320,7 @@ export async function markForRelearn(repos: Repos, cardIds: string[], front: boo
   for (const c of missed) {
     let target: Card | undefined = c
     if (!c.unlocked) {
-      const siblings = (await repos.cards.byNote(c.noteId)).filter((s) => s.unlocked && !s.suspended)
+      const siblings = (await repos.cards.byNote(c.noteId)).filter((s) => s.unlocked && !s.suspended && isActiveCard(s))
       target = siblings.sort((a, b) => b.order - a.order)[0]
     }
     if (target) targets.set(target.id, target)
@@ -343,7 +352,7 @@ export async function readinessFor(repos: Repos, notes: Note[]): Promise<Readine
   const live = notes.filter((n) => n.deletedAt === null && !n.suspended)
   const noteIds = new Set(live.map((n) => n.id))
   const candidates = noteIds.size <= 500 ? await repos.cards.byNotes([...noteIds]) : (await repos.cards.all()).filter((c) => noteIds.has(c.noteId))
-  const cards = candidates.filter((c) => !c.suspended)
+  const cards = candidates.filter((c) => !c.suspended && isActiveCard(c))
   // An index lookup per card is fast for a package; for thousands of cards one full scan is cheaper.
   const ids = new Set(cards.map((c) => c.id))
   const logs = ids.size <= 500 ? await repos.logs.byCards([...ids]) : (await repos.logs.all()).filter((l) => ids.has(l.cardId))

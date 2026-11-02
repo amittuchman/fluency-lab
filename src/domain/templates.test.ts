@@ -1,49 +1,67 @@
 import sampleText from '../../samples/sample-package.txt?raw'
+import { buildPrompt, createPool } from './exercises'
 import { parseImport } from './parser'
-import { buildPrompt } from './prompt'
 import { emptyFsrs } from './scheduler'
 import { ALL_TENSES } from './tags'
-import { cardsToUnlock, contentChunks, findTermInExample, naturalKeyPhrase, reconcileCards, templatesFor } from './templates'
+import { findTermInExample, ITEM_TEMPLATE, naturalKeyPhrase, newCard, reconcileCards, seedItemCard, templatesFor } from './templates'
 import type { Card, Note, NoteContent } from './types'
 
 const note = (content: NoteContent, id = 'n1'): Note =>
   ({ ...content, id, tags: [], packageId: null, createdAt: 0, updatedAt: 0, suspended: false, deletedAt: null }) as Note
 
-describe('templatesFor', () => {
-  it('vocab: recog → cloze-use → produce → dictation, cloze-use only with a matching example', () => {
-    const v: NoteContent = { type: 'vocab', fields: { term: 'reluctant', definition: 'unwilling', examples: ['He was reluctant to go.'] } }
-    expect(templatesFor(v).map((t) => [t.template, t.order])).toEqual([
-      ['recog', 0],
-      ['cloze-use', 1],
-      ['produce', 2],
-      ['dictation', 3],
-    ])
-    const noEx: NoteContent = { type: 'vocab', fields: { term: 'reluctant', definition: 'unwilling', examples: [] } }
-    expect(templatesFor(noEx).map((t) => [t.template, t.order])).toEqual([
-      ['recog', 0],
-      ['produce', 1],
-      ['dictation', 2],
-    ])
+const oldCard = (template: string, extra: Partial<Card> = {}): Card => ({
+  ...newCard('n1', { template, order: 0, contentHash: 'x' }, 0),
+  ...extra,
+})
+
+describe('one card per item', () => {
+  it('every item type gets exactly one item card', () => {
+    const contents: NoteContent[] = [
+      { type: 'vocab', fields: { term: 'reluctant', definition: 'unwilling', examples: ['He was reluctant to go.'] } },
+      { type: 'sentence', fields: { text: 'It depends on you.' } },
+      { type: 'fix', fields: { wrong: 'a', right: 'b', rule: '' } },
+      { type: 'natural', fields: { mine: 'very big problem', natural: 'serious problem' } },
+      { type: 'tense', fields: { sentence: 'I {{went::go}}.', tense: 'past-simple' } },
+      { type: 'cloze', fields: { text: '{{a}} and {{b}}' } },
+    ]
+    for (const c of contents) expect(templatesFor(c).map((t) => t.template)).toEqual([ITEM_TEMPLATE])
   })
-  it('cloze: one independent card per cloze', () => {
-    const c: NoteContent = { type: 'cloze', fields: { text: '{{a}} and {{b}} and {{c}}' } }
-    expect(templatesFor(c).map((t) => [t.template, t.order])).toEqual([
-      ['cloze:1', 0],
-      ['cloze:2', 0],
-      ['cloze:3', 0],
-    ])
+
+  it('a new note gets a fresh L1 card with a deterministic id', () => {
+    const r = reconcileCards(note({ type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } }), [], 0)
+    expect(r.add).toHaveLength(1)
+    expect(r.add[0]).toMatchObject({ id: 'n1:item', template: 'item', level: 1, unlocked: true })
   })
-  it('other types follow their chains', () => {
-    expect(templatesFor({ type: 'fix', fields: { wrong: 'a', right: 'b', rule: '' } }).map((t) => t.template)).toEqual(['which-is-right', 'correct-it'])
-    expect(templatesFor({ type: 'tense', fields: { sentence: 'I {{went::go}}.', tense: 'past-simple' } }).map((t) => t.template)).toEqual([
-      'tense-choose',
-      'tense-fill',
-    ])
-    expect(templatesFor({ type: 'sentence', fields: { text: 'It depends on you.' } }).map((t) => t.template)).toEqual(['chunk-cloze', 'recall-full', 'speak'])
-    expect(templatesFor({ type: 'natural', fields: { mine: 'very big problem', natural: 'serious problem' } }).map((t) => t.template)).toEqual([
-      'upgrade',
-      'natural-cloze',
-    ])
+
+  it('edits that keep what is asked keep the schedule and level; content changes restart the item', () => {
+    const n = note({ type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } })
+    const card: Card = { ...reconcileCards(n, [], 0).add[0]!, level: 3, fsrs: { ...emptyFsrs(0), reps: 4, state: 2 } }
+    expect(reconcileCards(note({ type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'a better rule', he: 'x' } }), [card], 5)).toEqual({ add: [], update: [] })
+    const r = reconcileCards(note({ type: 'fix', fields: { wrong: 'a b', right: 'c e', rule: 'r' } }), [card], 5)
+    expect(r.update[0]).toMatchObject({ level: 1, cleanStreak: 0, fsrs: { reps: 0 }, resetAt: 5 })
+  })
+})
+
+describe('migration from the old per-exercise cards', () => {
+  it('the item inherits the best-learned old card and a starting level; old cards are left alone', () => {
+    const old = [
+      oldCard('recog', { fsrs: { ...emptyFsrs(0), state: 2, stability: 12, reps: 5, lastReview: 100, lapses: 1 } }),
+      oldCard('cloze-use', { fsrs: { ...emptyFsrs(0), state: 2, stability: 4, reps: 2, lastReview: 200 } }),
+      oldCard('produce'),
+    ]
+    const n = note({ type: 'vocab', fields: { term: 'hedge', definition: 'protect', examples: [] } })
+    const r = reconcileCards(n, old, 1_000)
+    expect(r.update).toEqual([]) // nothing written to old cards
+    expect(r.add).toHaveLength(1)
+    expect(r.add[0]).toMatchObject({ template: 'item', level: 2, fsrs: { stability: 12, reps: 5, lapses: 1 } })
+  })
+  it('a never-reviewed note starts at L1 as new; all-suspended stays suspended', () => {
+    const seeded = seedItemCard('n1', templatesFor({ type: 'sentence', fields: { text: 'Hi.' } })[0]!, [oldCard('chunk-cloze', { suspended: true })], 0)
+    expect(seeded).toMatchObject({ level: 1, suspended: true, fsrs: { state: 0 } })
+  })
+  it('level from old progress is capped at L3', () => {
+    const reviewed = ['recog', 'cloze-use', 'produce', 'dictation'].map((t) => oldCard(t, { fsrs: { ...emptyFsrs(0), state: 2, stability: 3, lastReview: 1 } }))
+    expect(seedItemCard('n1', { template: 'item', order: 0, contentHash: 'h' }, reviewed, 0).level).toBe(3)
   })
 })
 
@@ -52,48 +70,9 @@ describe('helpers', () => {
     expect(findTermInExample('follow through', 'He rarely follows through.')?.match).toBe('follows through')
     expect(findTermInExample('leverage', 'We leveraged our data.')?.match).toBe('leveraged')
     expect(findTermInExample('cat', 'The category is wide.')).toBeNull()
-    expect(findTermInExample('go', 'She {{went}} home.')?.match).toBe('went')
-  })
-  it('picks content-word chunks', () => {
-    expect(contentChunks("The trade-off isn't as clear-cut as it looks.").map((c) => c.text)).toEqual(['trade-off', 'clear-cut', 'looks.'])
   })
   it('finds the key phrase of a natural version', () => {
     expect(naturalKeyPhrase('This is a very big problem.', 'This is a serious problem.')?.text).toBe('serious')
-  })
-})
-
-describe('reconcile and unlock', () => {
-  const n = note({ type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } })
-
-  it('creates cards with only the first unlocked', () => {
-    const r = reconcileCards(n, [], 0, [2, 5, 14])
-    expect(r.add.map((c) => [c.template, c.unlocked])).toEqual([
-      ['which-is-right', true],
-      ['correct-it', false],
-    ])
-  })
-
-  it('unlocks the next template once stability reaches the threshold', () => {
-    const [a, b] = reconcileCards(n, [], 0, [2, 5, 14]).add as [Card, Card]
-    expect(cardsToUnlock([a, b], [2, 5, 14])).toEqual([])
-    const stable = { ...a, fsrs: { ...a.fsrs, stability: 2.3, state: 2 as const } }
-    expect(cardsToUnlock([stable, b], [2, 5, 14])).toEqual([b.id])
-  })
-
-  it('keeps scheduling when content is unchanged and resets when it changes', () => {
-    const cards = reconcileCards(n, [], 0, [2, 5, 14]).add.map((c) => ({ ...c, fsrs: { ...c.fsrs, reps: 3, state: 2 as const, stability: 1 } }))
-    expect(reconcileCards({ ...n, tags: ['x'] } as Note, cards, 10, [2, 5, 14])).toEqual({ add: [], update: [], remove: [] })
-    const edited = note({ type: 'fix', fields: { wrong: 'a b', right: 'c e', rule: 'r' } })
-    const r = reconcileCards(edited, cards, 10, [2, 5, 14])
-    expect(r.update).toHaveLength(2)
-    expect(r.update.every((c) => c.fsrs.reps === 0)).toBe(true)
-  })
-
-  it('removes cards whose template no longer applies', () => {
-    const v = note({ type: 'cloze', fields: { text: '{{a}} {{b}}' } })
-    const cards = reconcileCards(v, [], 0, [2, 5, 14]).add
-    const r = reconcileCards(note({ type: 'cloze', fields: { text: '{{a}} b' } }), cards, 1, [2, 5, 14])
-    expect(r.remove).toEqual([cards[1]!.id])
   })
 })
 
@@ -114,13 +93,12 @@ describe('sample package', () => {
     }
   })
 
-  it('every tense item gets a multiple-choice prompt from the conjugator', () => {
-    for (const item of parsed.items) {
-      if (item.content?.type !== 'tense') continue
-      const n = note(item.content)
-      const card = { ...reconcileCards(n, [], 0, [2, 5, 14]).add[0]!, fsrs: emptyFsrs(0) }
-      const p = buildPrompt(n, card, { promptLanguage: 'english' })
-      expect(p.kind, item.raw).toBe('choice')
+  it('every tense item gets its multiple choice at L1 (the conjugator can build it)', () => {
+    const notes = parsed.items.filter((i) => i.content).map((i, k) => ({ ...note(i.content!, `s${k}`), tags: i.tags }))
+    const pool = createPool(notes)
+    for (const n of notes.filter((x) => x.type === 'tense')) {
+      const card = reconcileCards(n, [], 0).add[0]!
+      expect(buildPrompt(n, card, { promptLanguage: 'english', pool }).exercise, n.type === 'tense' ? n.fields.sentence : '').toBe('tense-choose')
     }
   })
 })

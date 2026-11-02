@@ -86,4 +86,6 @@ export const META = {
   onboarding: 'onboarding',
   backupReminderSnoozedAt: 'backupReminderSnoozedAt',
   cheatSheets: 'cheatSheets',
+  /** Automatic full backup taken on this device just before the v3 exercise migration. */
+  backupBeforeV3: 'backup:before-v3',
 } as const

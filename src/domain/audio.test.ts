@@ -1,14 +1,14 @@
 import { checkSpeech } from './checker'
-import { buildPrompt } from './prompt'
+import { buildPrompt } from './exercises'
 import { emptyFsrs } from './scheduler'
-import type { Card, Note, NoteContent } from './types'
+import type { Card, Level, Note, NoteContent } from './types'
 
 const note = (content: NoteContent): Note =>
   ({ ...content, id: 'n', tags: [], packageId: null, createdAt: 0, updatedAt: 0, suspended: false, deletedAt: null }) as Note
-const card = (template: string): Card => ({
-  id: 'c',
+const card = (level: Level): Card => ({
+  id: 'n:item',
   noteId: 'n',
-  template,
+  template: 'item',
   order: 0,
   fsrs: emptyFsrs(0),
   suspended: false,
@@ -18,6 +18,7 @@ const card = (template: string): Card => ({
   contentHash: '',
   priority: false,
   createdAt: 0,
+  level,
 })
 
 describe('checkSpeech', () => {
@@ -34,28 +35,18 @@ describe('checkSpeech', () => {
   })
 })
 
-describe('audio-dependent prompts', () => {
-  const vocab = note({ type: 'vocab', fields: { term: 'hedge', definition: 'to reduce risk', examples: [] } })
+describe('audio- and speech-dependent prompts', () => {
   const sentence = note({ type: 'sentence', fields: { text: 'It depends on you.' } })
   const withHe = note({ type: 'sentence', fields: { text: 'It depends on you.', he: 'זה תלוי בך.' } })
 
-  it('dictation plays audio when available, otherwise falls back to production', () => {
-    const a = buildPrompt(vocab, card('dictation'), { promptLanguage: 'english', audio: true })
-    expect(a).toMatchObject({ kind: 'typed', audioPrompt: true, accepted: ['hedge'] })
-    expect(a.prompt).toBeUndefined()
-    const b = buildPrompt(vocab, card('dictation'), { promptLanguage: 'english', audio: false })
-    expect(b).toMatchObject({ kind: 'typed', prompt: 'to reduce risk' })
-    expect(b.audioPrompt).toBeUndefined()
+  it('guided recall: Hebrew first, then the audio, always with first letters', () => {
+    expect(buildPrompt(withHe, card(2), { promptLanguage: 'english', audio: true })).toMatchObject({ prompt: 'זה תלוי בך.', promptIsHebrew: true, hint: 'I d o y.' })
+    expect(buildPrompt(sentence, card(2), { promptLanguage: 'english', audio: true })).toMatchObject({ audioPrompt: true, hint: 'I d o y.' })
+    expect(buildPrompt(sentence, card(2), { promptLanguage: 'english' }).audioPrompt).toBeUndefined()
   })
 
-  it('full recall: Hebrew gloss first, then audio, then first letters', () => {
-    expect(buildPrompt(withHe, card('recall-full'), { promptLanguage: 'english', audio: true })).toMatchObject({ prompt: 'זה תלוי בך.', promptIsHebrew: true })
-    expect(buildPrompt(sentence, card('recall-full'), { promptLanguage: 'english', audio: true })).toMatchObject({ audioPrompt: true })
-    expect(buildPrompt(sentence, card('recall-full'), { promptLanguage: 'english' })).toMatchObject({ prompt: 'I d o y.' })
-  })
-
-  it('speak uses speech recognition when available, otherwise a self-graded flip', () => {
-    expect(buildPrompt(withHe, card('speak'), { promptLanguage: 'english', speech: true })).toMatchObject({ kind: 'speak', target: 'It depends on you.' })
-    expect(buildPrompt(withHe, card('speak'), { promptLanguage: 'english', speech: false })).toMatchObject({ kind: 'flip', front: 'זה תלוי בך.' })
+  it('L4 speaking uses speech recognition when available, otherwise typing the translation', () => {
+    expect(buildPrompt(withHe, card(4), { promptLanguage: 'english', speech: true })).toMatchObject({ kind: 'speak', target: 'It depends on you.' })
+    expect(buildPrompt(withHe, card(4), { promptLanguage: 'english', speech: false })).toMatchObject({ kind: 'typed', exercise: 'sentence-translate' })
   })
 })

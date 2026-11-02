@@ -1,13 +1,17 @@
 import sampleText from '../../samples/sample-package.txt?raw'
-import { validateBackup } from '../domain/backup'
+import { validateBackup, type BackupFile } from '../domain/backup'
+import { emptyFsrs } from '../domain/scheduler'
+import { isActiveCard, newCard } from '../domain/templates'
+import type { Card } from '../domain/types'
 import { parseImport } from '../domain/parser'
 import { exportBackup, importBackup } from './backup'
 import { createDexieRepos, FluencyDB, SCHEMA_VERSION } from './dexie'
-import type { Repos } from './repos'
+import { META, type Repos } from './repos'
 import {
   createNote,
   importPackage,
   initialize,
+  makeNote,
   markForRelearn,
   readinessFor,
   restoreNotes,
@@ -57,28 +61,39 @@ it('imports the sample as one package with cards', async () => {
 })
 
 describe('reviews', () => {
-  it('reschedules, buries siblings, unlocks the next template, and undo restores everything', async () => {
+  it('reschedules, moves the level, and undo restores everything', async () => {
     const note = await createNote(repos, { type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } }, [], null, NOW)
-    const [first, second] = (await repos.cards.byNote(note.id)).sort((a, b) => a.order - b.order)
-    const before = await repos.cards.get(first!.id)
+    const cards = await repos.cards.byNote(note.id)
+    expect(cards).toHaveLength(1)
+    const item = cards[0]!
+    const review = (grade: 1 | 3 | 4, now: number, exercise = 'fix-choose') =>
+      reviewCard(repos, { cardId: item.id, grade, correct: grade > 1, responseMs: 1000, mode: 'session', userAnswer: null, now, fuzz: false, exercise })
 
-    const out = await reviewCard(repos, { cardId: first!.id, grade: 4, correct: true, responseMs: 1000, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
+    const out = await review(4, NOW)
     expect(out.card.fsrs.reps).toBe(1)
     expect(out.card.fsrs.stability).toBeGreaterThanOrEqual(2)
-    const sib = await repos.cards.get(second!.id)
-    expect(sib!.unlocked).toBe(true)
-    expect(sib!.buriedUntil).toBeGreaterThan(NOW)
+    expect(out.card).toMatchObject({ level: 1, cleanStreak: 1 })
+    expect(out.log).toMatchObject({ exercise: 'fix-choose', level: 1 })
+    const two = await review(3, NOW + 60_000)
+    expect(two.card).toMatchObject({ level: 2, cleanStreak: 0 })
 
-    const undone = await undoLastReview(repos)
-    expect(undone?.id).toBe(out.log.id)
+    await undoLastReview(repos)
+    expect((await repos.cards.get(item.id))!).toMatchObject({ level: 1, cleanStreak: 1 })
+    await undoLastReview(repos)
     // The exact pre-review state comes back; resetAt marks it as newer than the undone review for sync.
-    const { resetAt, ...restored } = (await repos.cards.get(first!.id))!
-    expect(restored).toEqual(before)
+    const { resetAt, ...restored } = (await repos.cards.get(item.id))!
+    expect(restored).toEqual(item)
     expect(resetAt).toBeGreaterThan(0)
-    const sib2 = await repos.cards.get(second!.id)
-    expect(sib2!.unlocked).toBe(false)
-    expect(sib2!.buriedUntil).toBeNull()
     expect(await repos.logs.all()).toEqual([])
+  })
+
+  it('two mistakes in a row move the item down a level', async () => {
+    const note = await createNote(repos, { type: 'sentence', fields: { text: 'It depends on you.' } }, [], null, NOW)
+    const [card] = await repos.cards.byNote(note.id)
+    await repos.cards.put({ ...card!, level: 3 })
+    const base = { cardId: card!.id, responseMs: 1, mode: 'session' as const, userAnswer: null, fuzz: false, correct: false, grade: 1 as const }
+    expect((await reviewCard(repos, { ...base, now: NOW })).card).toMatchObject({ level: 3, missStreak: 1 })
+    expect((await reviewCard(repos, { ...base, now: NOW + 60_000 })).card).toMatchObject({ level: 2, missStreak: 0 })
   })
 
   it('flags a leech after 6 lapses', async () => {
@@ -119,27 +134,22 @@ describe('reviews', () => {
   })
 })
 
-it('editing a note keeps scheduling unless the card content changed', async () => {
+it('editing a note keeps scheduling unless what is asked changed', async () => {
   const note = await createNote(repos, { type: 'vocab', fields: { term: 'hedge', definition: 'to protect', examples: ['Firms hedge risk.'] } }, [], null, NOW)
-  const recog = (await repos.cards.byNote(note.id)).find((c) => c.template === 'recog')!
-  await reviewCard(repos, { cardId: recog.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
+  const [item] = await repos.cards.byNote(note.id)
+  await reviewCard(repos, { cardId: item!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
   await updateNote(repos, note.id, { type: 'vocab', fields: { term: 'hedge', definition: 'to protect', examples: ['Firms hedge risk.'], he: 'לגדר' } }, ['x'], NOW + 1)
-  expect((await repos.cards.get(recog.id))!.fsrs.reps).toBe(1)
+  expect((await repos.cards.get(item!.id))!.fsrs.reps).toBe(1)
   await updateNote(repos, note.id, { type: 'vocab', fields: { term: 'hedge', definition: 'to reduce risk', examples: ['Firms hedge risk.'] } }, ['x'], NOW + 2)
-  expect((await repos.cards.get(recog.id))!.fsrs.reps).toBe(0)
+  expect((await repos.cards.get(item!.id))!).toMatchObject({ level: 1, fsrs: { reps: 0 } })
 })
 
-it('quiz misses: a locked card maps to the most advanced unlocked sibling, made due now and prioritized', async () => {
+it('quiz misses: the item is made due now and prioritized', async () => {
   const note = await createNote(repos, { type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } }, [], null, NOW)
-  const cards = (await repos.cards.byNote(note.id)).sort((a, b) => a.order - b.order)
-  const first = (await reviewCard(repos, { cardId: cards[0]!.id, grade: 4, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })).card
-  await undoLastReview(repos) // keep the second card locked
-  await repos.cards.put(first)
-  await markForRelearn(repos, [cards[1]!.id], true, NOW + 1000)
-  const after = await repos.cards.get(cards[0]!.id)
-  expect(after!.fsrs.due).toBe(NOW + 1000)
-  expect(after!.priority).toBe(true)
-  expect((await repos.cards.get(cards[1]!.id))!.unlocked).toBe(false)
+  const [item] = await repos.cards.byNote(note.id)
+  await reviewCard(repos, { cardId: item!.id, grade: 4, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
+  await markForRelearn(repos, [item!.id], true, NOW + 1000)
+  expect((await repos.cards.get(item!.id))!).toMatchObject({ priority: true, fsrs: { due: NOW + 1000 } })
 })
 
 it('trash and restore', async () => {
@@ -159,25 +169,54 @@ it('trash older than 30 days is purged on startup', async () => {
   expect(await repos.cards.byNote(note.id)).toEqual([])
 })
 
-it('readiness: a card is ready after its last two answers were correct', async () => {
+it('readiness: an item is ready after its last two answers were correct', async () => {
   const note = await createNote(repos, { type: 'sentence', fields: { text: 'It depends on you.' } }, [], null, NOW)
-  const card = (await repos.cards.byNote(note.id)).find((c) => c.order === 0)!
-  const base = { cardId: card.id, responseMs: 1, mode: 'drill' as const, userAnswer: null, fuzz: false, grade: 3 as const, correct: true }
+  const [card] = await repos.cards.byNote(note.id)
+  const base = { cardId: card!.id, responseMs: 1, mode: 'drill' as const, userAnswer: null, fuzz: false, grade: 3 as const, correct: true }
   await reviewCard(repos, { ...base, now: NOW })
   expect((await readinessFor(repos, [note])).readyIds).toEqual([])
   await reviewCard(repos, { ...base, now: NOW + 1 })
-  // Locked templates count too (recall-full and speak): a drill covers every card of the package.
-  expect(await readinessFor(repos, [note])).toMatchObject({ total: 3, ready: 1, readyIds: [card.id] })
+  expect(await readinessFor(repos, [note])).toMatchObject({ total: 1, ready: 1, readyIds: [card!.id] })
 })
 
-it('drill: a locked card can be drilled and is unlocked by it; undo re-locks it', async () => {
-  const note = await createNote(repos, { type: 'fix', fields: { wrong: 'a b', right: 'c d', rule: 'r' } }, [], null, NOW)
-  const locked = (await repos.cards.byNote(note.id)).find((c) => c.order === 1)!
-  expect(locked.unlocked).toBe(false)
-  const out = await reviewCard(repos, { cardId: locked.id, grade: 3, correct: true, responseMs: 1, mode: 'drill', userAnswer: 'c d', now: NOW, fuzz: false })
-  expect(out.card.unlocked).toBe(true)
-  await undoLastReview(repos)
-  expect((await repos.cards.get(locked.id))!.unlocked).toBe(false)
+describe('migration to one card per item', () => {
+  async function oldDevice() {
+    // A device with data from before the redesign: a note with its old per-exercise cards.
+    const note = makeNote({ type: 'vocab', fields: { term: 'hedge', definition: 'to protect', examples: ['Firms hedge risk.'] } }, ['x'], null, NOW)
+    const old = (template: string, order: number, fsrs: Partial<Card['fsrs']> = {}): Card => ({
+      ...newCard(note.id, { template, order, contentHash: 'h' }, NOW),
+      fsrs: { ...emptyFsrs(NOW), ...fsrs },
+    })
+    const cards = [old('recog', 0, { state: 2, stability: 9, reps: 4, lastReview: NOW }), old('cloze-use', 1, { state: 2, stability: 2, reps: 1, lastReview: NOW }), old('produce', 2)]
+    await repos.notes.put(note)
+    await repos.cards.bulkPut(cards)
+    await repos.meta.set(META.templateVersion, 2)
+    return { note, cards }
+  }
+
+  it('backs everything up first, keeps the old cards untouched, and seeds the item from them', async () => {
+    const { note, cards } = await oldDevice()
+    await initialize(repos, NOW + 1)
+    const backup = await repos.meta.get<BackupFile>(META.backupBeforeV3)
+    expect(validateBackup(backup, SCHEMA_VERSION).ok).toBe(true)
+    expect(backup!.tables.cards.map((c) => c.id).sort()).toEqual(cards.map((c) => c.id).sort())
+    const after = await repos.cards.byNote(note.id)
+    for (const c of cards) expect(after.find((x) => x.id === c.id)).toEqual(c)
+    expect(after.find(isActiveCard)).toMatchObject({ template: 'item', level: 2, fsrs: { stability: 9, reps: 4 } })
+  })
+
+  it('the device-only backup is not synced or exported, and survives a later startup', async () => {
+    await oldDevice()
+    await initialize(repos, NOW + 1)
+    expect((await repos.meta.all()).some((m) => m.key === META.backupBeforeV3)).toBe(false)
+    const before = await repos.meta.get(META.backupBeforeV3)
+    await initialize(repos, NOW + 2)
+    expect(await repos.meta.get(META.backupBeforeV3)).toEqual(before)
+  })
+
+  it('a fresh install takes no backup', async () => {
+    expect(await repos.meta.get(META.backupBeforeV3)).toBeUndefined()
+  })
 })
 
 describe('backup', () => {

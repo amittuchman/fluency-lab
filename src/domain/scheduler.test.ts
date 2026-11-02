@@ -1,4 +1,4 @@
-import { buildDailyQueue, interleave } from './queue'
+import { buildDailyQueue, groupByPattern, interleave } from './queue'
 import { dayEnd, dayKey, dayStart, emptyFsrs, formatInterval, Scheduler } from './scheduler'
 import { DEFAULT_SETTINGS, type Card, type Note } from './types'
 import { answerDrill, startDrill } from './drill'
@@ -66,7 +66,7 @@ describe('daily queue', () => {
   const mkCard = (id: string, noteId: string, opts: Partial<Card> & { state?: 0 | 2; due?: number } = {}): Card => ({
     id,
     noteId,
-    template: 't',
+    template: 'item',
     order: 0,
     fsrs: { ...emptyFsrs(now), state: opts.state ?? 0, due: opts.due ?? now },
     suspended: false,
@@ -115,6 +115,28 @@ describe('daily queue', () => {
     const cards = ['a', 'b', 'c', 'd', 'e'].map((id) => mkCard(id + '1', id))
     const q = buildDailyQueue({ cards, notes, todayLogs: [], settings: { ...DEFAULT_SETTINGS, newPerDay: 3 }, now })
     expect(q.queue.map((c) => c.noteId).sort()).toEqual(['a', 'd', 'e'])
+  })
+
+  it('only item cards are studied; old per-exercise cards stay out of the queue', () => {
+    const notes = new Map([mkNote('a', 'vocab', 'x')].map((n) => [n.id, n]))
+    const cards = [mkCard('old', 'a', { template: 'recog', state: 2, due: now - DAY }), mkCard('a:item', 'a')]
+    expect(buildDailyQueue({ cards, notes, todayLogs: [], settings: DEFAULT_SETTINGS, now }).queue.map((c) => c.id)).toEqual(['a:item'])
+  })
+
+  it('related mistakes (same pattern) come one after another', () => {
+    const withPattern = (id: string, type: Note['type'], pattern: string, createdAt: number): Note => ({ ...mkNote(id, type, 'x', createdAt), tags: ['x', pattern] })
+    const notes = new Map(
+      [
+        withPattern('a', 'fix', 'pattern:depend-on', 1),
+        withPattern('b', 'vocab', 'pattern:other', 2),
+        withPattern('c', 'fix', 'pattern:depend-on', 3),
+        withPattern('d', 'tense', 'pattern:t', 4),
+      ].map((n) => [n.id, n]),
+    )
+    const cards = ['a', 'b', 'c', 'd'].map((id) => mkCard(id + '1', id))
+    const ids = buildDailyQueue({ cards, notes, todayLogs: [], settings: DEFAULT_SETTINGS, now }).queue.map((c) => c.noteId)
+    expect(Math.abs(ids.indexOf('a') - ids.indexOf('c'))).toBe(1)
+    expect(groupByPattern(cards, notes, (c) => [notes.get(c.noteId)!.type, '']).map((c) => c.noteId).join('')).toMatch(/ac|ca/)
   })
 
   it('interleaves types', () => {

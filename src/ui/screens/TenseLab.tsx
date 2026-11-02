@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { repos } from '../../data'
+import { isActiveCard } from '../../domain/templates'
 import { META } from '../../data/repos'
 import { cheatSheetFor, DEFAULT_CHEATSHEETS, type CheatSheet } from '../../domain/cheatsheets'
 import { dayEnd } from '../../domain/scheduler'
@@ -31,7 +32,8 @@ export function TenseLab() {
   const [sheet, setSheet] = useState<TenseName>('present-perfect')
 
   const stats = useRepoQuery(async () => {
-    const [notes, cards] = await Promise.all([repos.notes.all(), repos.cards.all()])
+    const [notes, allCards] = await Promise.all([repos.notes.all(), repos.cards.all()])
+    const cards = allCards.filter(isActiveCard)
     return new Map(tenseStats(notes, cards, now, dayEnd(now, settings.rolloverHour)).map((s) => [s.tense, s]))
   }, [now, settings.rolloverHour])
 

@@ -1,9 +1,12 @@
-import { clozeBlank, clozeCount, clozePlain, hasCloze } from './cloze'
+import type { CheckOptions } from './checker'
 import { tokenize } from './checker'
-import { tenseChoice } from './conjugator'
-import { contentChunks, naturalKeyPhrase, vocabClozeExample, type Chunk } from './templates'
-import type { Card, Note, Settings, TenseName } from './types'
-import { seededRandom, shuffle } from './util'
+import type { Chunk } from './templates'
+import type { Level, Settings, TenseName } from './types'
+
+/**
+ * What the study screen renders: one exercise for one item. Built by ./exercises from the item's data,
+ * its level, and how long it has been since it was last seen.
+ */
 
 /** Everything shown after the answer is revealed. */
 export interface Reveal {
@@ -26,6 +29,9 @@ export interface Context {
 }
 
 interface PromptBase {
+  /** Which exercise this is and at which level (logged with the review). */
+  exercise: string
+  level: Level
   instruction: string
   /** Main prompt text (above the input). */
   prompt?: string
@@ -37,24 +43,32 @@ interface PromptBase {
   /** Text to read aloud. */
   speak: string
   /**
-   * The audio is (part of) the question, so it may play before the reveal (dictation, recognition of a
-   * shown term). Otherwise audio would give the answer away and is offered only after the reveal.
+   * The audio is (part of) the question, so it may play before the reveal (recognition of a shown term,
+   * "listen then type"). Otherwise audio would give the answer away and is offered only after the reveal.
    */
   audioPrompt?: boolean
+  /** Shown because the item hasn't been seen for a while: a recall exercise instead of the usual one. */
+  afterBreak?: boolean
 }
 
 export interface FlipPrompt extends PromptBase {
   kind: 'flip'
   front: string
   frontSub?: string
+  /** A sentence shown under the front as context (the word in its original example). */
+  example?: string
+  /** The main line of the back (the meaning). */
+  back: string
 }
 
 export interface TypedPrompt extends PromptBase {
   kind: 'typed'
   accepted: string[]
-  typoTolerance: boolean
+  check: CheckOptions
   multiline: boolean
-  /** For tense cards: lets the UI explain a wrong tense. */
+  /** No automatic verdict: the answer is free (e.g. "write your own sentence"); compare with the model and grade. */
+  selfCheck?: boolean
+  /** For tense items: lets the UI explain a wrong tense. */
   tenseInfo?: { verb: string; tense: TenseName; before: string; sentence: string }
 }
 
@@ -72,6 +86,14 @@ export interface SpeakPrompt extends PromptBase {
 
 export type Prompt = FlipPrompt | TypedPrompt | ChoicePrompt | SpeakPrompt
 
+export interface PromptOptions {
+  promptLanguage: Settings['promptLanguage']
+  /** Text-to-speech with an English voice is available. */
+  audio?: boolean
+  /** Speech recognition is available. */
+  speech?: boolean
+}
+
 /** Split a sentence around a token chunk, moving edge punctuation out of the answer. */
 export function blankChunk(text: string, chunk: Chunk): { context: Context; answer: string } {
   const tokens = tokenize(text)
@@ -87,269 +109,9 @@ export function blankChunk(text: string, chunk: Chunk): { context: Context; answ
   }
 }
 
-function firstLetters(text: string): string {
+/** "It depends on you." → "I d o y." */
+export function firstLetters(text: string): string {
   return tokenize(text)
     .map((t) => t.replace(/\p{L}[\p{L}']*/gu, (w) => w[0]!))
     .join(' ')
-}
-
-export interface PromptOptions {
-  promptLanguage: Settings['promptLanguage']
-  /** Text-to-speech with an English voice is available. */
-  audio?: boolean
-  /** Speech recognition is available. */
-  speech?: boolean
-}
-
-export function buildPrompt(note: Note, card: Card, opts: PromptOptions): Prompt {
-  const rand = seededRandom(`${card.id}:${card.fsrs.reps}`)
-  const t = card.template
-
-  switch (note.type) {
-    case 'vocab': {
-      const f = note.fields
-      const reveal: Reveal = {
-        answer: f.term,
-        definition: f.definition,
-        examples: f.examples.map(clozePlain),
-        ...(f.collocations ? { collocations: f.collocations } : {}),
-        ...(f.he ? { he: f.he } : {}),
-        ...(f.notes ? { notes: f.notes } : {}),
-      }
-      if (t === 'cloze-use') {
-        const ex = vocabClozeExample(f)
-        if (ex) {
-          return {
-            kind: 'typed',
-            instruction: 'Fill in the missing word',
-            context: { before: ex.match.before, after: ex.match.after },
-            hint: f.definition,
-            accepted: [ex.match.match],
-            typoTolerance: true,
-            multiline: false,
-            reveal: { ...reveal, answer: ex.match.match, full: clozePlain(ex.example) },
-            speak: clozePlain(ex.example),
-          }
-        }
-      }
-      if (t === 'dictation' && opts.audio) {
-        return {
-          kind: 'typed',
-          instruction: 'Listen and type what you hear',
-          accepted: [f.term],
-          typoTolerance: true,
-          multiline: false,
-          reveal,
-          speak: f.term,
-          audioPrompt: true,
-        }
-      }
-      // Without audio, dictation (and cloze-use without a usable example) falls back to production.
-      if (t === 'produce' || t === 'cloze-use' || t === 'dictation') {
-        const hebrew = opts.promptLanguage === 'hebrew' && !!f.he
-        return {
-          kind: 'typed',
-          instruction: 'Which word or phrase is this?',
-          prompt: hebrew ? f.he : f.definition,
-          promptIsHebrew: hebrew,
-          ...(f.pos ? { hint: f.pos } : {}),
-          accepted: [f.term],
-          typoTolerance: true,
-          multiline: false,
-          reveal,
-          speak: f.term,
-        }
-      }
-      return {
-        kind: 'flip',
-        instruction: 'Do you know what this means?',
-        front: f.term,
-        ...(f.pos ? { frontSub: f.pos } : {}),
-        reveal,
-        speak: f.term,
-        audioPrompt: true,
-      }
-    }
-
-    case 'sentence': {
-      const f = note.fields
-      const plain = clozePlain(f.text)
-      const reveal: Reveal = { answer: plain, full: plain, ...(f.he ? { he: f.he } : {}), ...(f.notes ? { notes: f.notes } : {}) }
-      // Prompt for full recall: the Hebrew gloss if there is one, otherwise audio, otherwise first letters.
-      const cue = f.he
-        ? { instruction: 'Say it in English, then type it', prompt: f.he, promptIsHebrew: true }
-        : opts.audio
-          ? { instruction: 'Listen, then type the sentence', audioPrompt: true }
-          : { instruction: 'Recall the sentence from its first letters', prompt: firstLetters(plain) }
-      if (t === 'recall-full') {
-        return { kind: 'typed', ...cue, accepted: [plain], typoTolerance: true, multiline: true, reveal, speak: plain }
-      }
-      if (t === 'speak') {
-        const instruction = f.he ? 'Say it in English' : opts.audio ? 'Listen, then say it back' : 'Say the sentence from its first letters'
-        if (opts.speech) return { kind: 'speak', ...cue, instruction, target: plain, reveal, speak: plain }
-        // No speech recognition: say it aloud, reveal, grade yourself.
-        return {
-          kind: 'flip',
-          instruction: `${instruction} (out loud), then check`,
-          front: cue.prompt ?? '🔊',
-          promptIsHebrew: !!cue.promptIsHebrew,
-          ...(cue.audioPrompt ? { audioPrompt: true } : {}),
-          reveal,
-          speak: plain,
-        }
-      }
-      // chunk-cloze: markup chunks if present, otherwise auto-picked content chunks; rotate by review count.
-      let context: Context
-      let accepted: string[]
-      if (hasCloze(f.text)) {
-        const n = (card.fsrs.reps % clozeCount(f.text)) + 1
-        const b = clozeBlank(f.text, n)!
-        context = { before: b.before, after: b.after }
-        accepted = b.answers
-      } else {
-        const chunks = contentChunks(plain)
-        const b = blankChunk(plain, chunks[card.fsrs.reps % chunks.length]!)
-        context = b.context
-        accepted = [b.answer]
-      }
-      return {
-        kind: 'typed',
-        instruction: 'Complete the sentence',
-        context,
-        accepted,
-        typoTolerance: true,
-        multiline: false,
-        reveal: { ...reveal, answer: accepted[0]! },
-        speak: plain,
-      }
-    }
-
-    case 'fix': {
-      const f = note.fields
-      const right = f.right.split('//')[0]!.trim()
-      const reveal: Reveal = { answer: right, original: f.wrong, ...(f.rule ? { rule: f.rule } : {}) }
-      if (t === 'which-is-right') {
-        const options = shuffle([right, f.wrong], rand)
-        return {
-          kind: 'choice',
-          instruction: 'Which one is correct?',
-          options,
-          correctIndex: options.indexOf(right),
-          reveal,
-          speak: right,
-        }
-      }
-      return {
-        kind: 'typed',
-        instruction: 'Correct the sentence',
-        prompt: f.wrong,
-        accepted: f.right.split('//').map((s) => s.trim()),
-        typoTolerance: false,
-        multiline: true,
-        reveal,
-        speak: right,
-      }
-    }
-
-    case 'natural': {
-      const f = note.fields
-      const natural = clozePlain(f.natural)
-      const reveal: Reveal = { answer: natural, full: natural, original: f.mine, ...(f.note ? { notes: f.note } : {}) }
-      if (t === 'natural-cloze') {
-        let context: Context | null = null
-        let accepted: string[] = []
-        if (hasCloze(f.natural)) {
-          const b = clozeBlank(f.natural, 1)!
-          context = { before: b.before, after: b.after }
-          accepted = b.answers
-        } else {
-          const key = naturalKeyPhrase(f.mine, natural)
-          if (key) {
-            const b = blankChunk(natural, key)
-            context = b.context
-            accepted = [b.answer]
-          }
-        }
-        if (context && accepted.length) {
-          return {
-            kind: 'typed',
-            instruction: 'Complete the natural version',
-            prompt: f.mine,
-            context,
-            accepted,
-            typoTolerance: false,
-            multiline: false,
-            reveal: { ...reveal, answer: accepted[0]! },
-            speak: natural,
-          }
-        }
-      }
-      return {
-        kind: 'typed',
-        instruction: 'Say it more naturally',
-        prompt: f.mine,
-        accepted: [natural],
-        typoTolerance: false,
-        multiline: true,
-        reveal,
-        speak: natural,
-      }
-    }
-
-    case 'tense': {
-      const f = note.fields
-      const b = clozeBlank(f.sentence, 1)
-      const full = clozePlain(f.sentence)
-      const answers = b?.answers ?? []
-      const verb = b?.hint ?? ''
-      const reveal: Reveal = { answer: answers[0] ?? '', full, tense: f.tense, ...(f.why ? { why: f.why } : {}) }
-      const context = { before: b?.before ?? '', after: b?.after ?? '' }
-      if (t === 'tense-choose') {
-        const choice = tenseChoice({ verb, tense: f.tense, answers, before: context.before, sentence: full })
-        if (choice) {
-          const options = shuffle(choice.options, rand)
-          return {
-            kind: 'choice',
-            instruction: 'Choose the right form',
-            context,
-            ...(verb ? { hint: verb } : {}),
-            options,
-            correctIndex: options.indexOf(choice.options[choice.correctIndex]!),
-            reveal,
-            speak: full,
-          }
-        }
-      }
-      return {
-        kind: 'typed',
-        instruction: 'Fill in the verb in the right tense',
-        context,
-        ...(verb ? { hint: verb } : {}),
-        accepted: answers,
-        typoTolerance: false,
-        multiline: false,
-        reveal,
-        speak: full,
-        ...(verb ? { tenseInfo: { verb, tense: f.tense, before: context.before, sentence: full } } : {}),
-      }
-    }
-
-    case 'cloze': {
-      const text = note.fields.text
-      const n = Number(t.split(':')[1] ?? 1)
-      const b = clozeBlank(text, n) ?? clozeBlank(text, 1)
-      const full = clozePlain(text)
-      return {
-        kind: 'typed',
-        instruction: 'Fill in the blank',
-        context: { before: b?.before ?? '', after: b?.after ?? '' },
-        ...(b?.hint ? { hint: b.hint } : {}),
-        accepted: b?.answers ?? [],
-        typoTolerance: false,
-        multiline: false,
-        reveal: { answer: b?.answers[0] ?? '', full },
-        speak: full,
-      }
-    }
-  }
 }

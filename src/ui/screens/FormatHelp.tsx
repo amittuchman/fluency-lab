@@ -4,17 +4,18 @@ const EXAMPLE = `# Package: 2026-10-19 – Economics debate
 // Lines starting with // are comments; blank lines are ignored.
 @vocab reluctant | unwilling and hesitant | He was reluctant to commit. | he: מסויג | pos: adj | #adjectives
 @sentence The trade-off isn't as clear-cut as it looks. | he: … | #natural-phrasing
-@fix I very agree with you. => I completely agree with you. | rule: "very" cannot modify a verb | #adverbs
-@natural I think this solution is very good. => I think this approach makes a lot of sense. | #natural-phrasing
+@fix I very agree with you. => I completely agree with you. | rule: "very" cannot modify a verb | he: אני מסכים איתך לגמרי. | pattern: very + verb | also: I very like it. => I really like it. | #adverbs
+@natural I think this solution is very good. => I think this approach makes a lot of sense. | prompt: You react to a colleague's idea | #natural-phrasing
 @tense I {{have been working::work}} here for five years. | tense: present perfect continuous | why: ongoing action up to now | #tenses
-@cloze The central bank {{raised//put up::raise}} rates last week. | #economics`
+@cloze The central bank {{raised//put up::raise}} rates last week. | dist: rose; has risen | #economics`
 
 const JSON_EXAMPLE = `{
   "package": "Economics debate",
   "items": [
     { "type": "vocab", "term": "reluctant", "definition": "unwilling and hesitant",
       "examples": ["He was reluctant to commit."], "he": "מסויג", "pos": "adj", "tags": ["adjectives"] },
-    { "type": "fix", "wrong": "I very agree.", "right": "I completely agree.", "rule": "…" },
+    { "type": "fix", "wrong": "I very agree.", "right": "I completely agree.", "rule": "…",
+      "he": "…", "pattern": "very + verb", "also": ["I very like it. => I really like it."] },
     { "type": "tense", "sentence": "I {{went::go}} home.", "tense": "past simple", "why": "…" }
   ]
 }`
@@ -36,7 +37,7 @@ export function FormatHelp() {
             <code>@vocab term | definition | example | example…</code>: un-keyed segments after the definition are examples.
           </li>
           <li>
-            <code>@sentence text</code>: optionally mark chunks to hide with <code>{'{{…}}'}</code>.
+            <code>@sentence text</code>: add <code>he:</code> for Hebrew ↔ English practice.
           </li>
           <li>
             <code>@fix wrong =&gt; right | rule: …</code>: <code>-&gt;</code> works too.
@@ -48,7 +49,7 @@ export function FormatHelp() {
             <code>@tense sentence with {'{{answer::base verb}}'} | tense: … | why: …</code>: the base verb powers the multiple choice.
           </li>
           <li>
-            <code>@cloze text with {'{{…}}'}</code>: each <code>{'{{…}}'}</code> becomes its own card.
+            <code>@cloze text with {'{{…}}'}</code>: only the marked words are ever blanked; several blanks take turns.
           </li>
         </ul>
       </section>
@@ -58,6 +59,16 @@ export function FormatHelp() {
           <li>
             Keyed segments: <code>he:</code> <code>pos:</code> <code>rule:</code> <code>note:</code> <code>tense:</code> <code>why:</code> <code>coll:</code> (collocations, separated by
             <code>;</code>).
+          </li>
+          <li>
+            Optional on any item, for more varied exercises: <code>he:</code> (Hebrew meaning), <code>prompt:</code> (a situation to
+            answer), <code>rule:</code> (a short rule), <code>dist:</code> (wrong options, separated by <code>;</code>),{' '}
+            <code>also:</code> (another sentence with the same mistake: <code>wrong =&gt; right</code> for @fix, a{' '}
+            <code>{'{{answer::verb}}'}</code> sentence for @tense; repeat it or separate with <code>;</code>),{' '}
+            <code>pattern:</code> (a name for the mistake, so related items are practiced together).
+          </li>
+          <li>
+            Tag a word <code>#spelling</code> to practice writing it exactly; otherwise small typos are forgiven.
           </li>
           <li>
             Tags start with <code>#</code>. They're saved lowercase and hyphenated. Tense names become <code>tense:present-perfect</code> etc.

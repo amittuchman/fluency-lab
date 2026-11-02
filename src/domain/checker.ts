@@ -1,3 +1,4 @@
+import { IRREGULAR_VERBS } from './irregulars'
 import type { Grade } from './types'
 import { straightenQuotes } from './util'
 
@@ -176,31 +177,119 @@ export interface CheckResult {
   diff: DiffOp[]
   /** The reference answer the typed text was compared with (best of the alternatives). */
   reference: string
+  /** Spelling slips that were forgiven (typed → expected). */
+  typos: Array<{ typed: string; expected: string }>
+  /** 0–1 word overlap with the reference (2·LCS / total), typos counted as matches. */
+  similarity: number
 }
 
-function isTypo(op: DiffOp): boolean {
+export interface CheckOptions {
+  /**
+   * exact: every word must match (contractions, case and punctuation aside).
+   * meaning: for free production; a close answer that keeps the key words is "almost" (compare with the model).
+   */
+  mode?: 'exact' | 'meaning'
+  /** tolerate (default): small spelling slips count as correct. strict: spelling is the point. */
+  typos?: 'tolerate' | 'strict'
+  /** The words that are the point of the exercise (the corrected word, the verb form…): never forgiven. */
+  protect?: readonly string[]
+}
+
+const INFLECTION = /(ies|ied|ing|es|ed|ly|s|d)$/
+const ENDING = /^(s|es|d|ed|ing|ly|er|est|ies|ied)$/
+
+/** A grammar change ("work" → "worked", "advice" → "advices", "rise" → "rose") is not a typo. */
+function sameStemDifferentEnding(a: string, b: string): boolean {
+  if (a === b) return false
+  const strip = (w: string) => w.replace(INFLECTION, '')
+  const extends_ = (x: string, y: string) => x.startsWith(y) && ENDING.test(x.slice(y.length))
+  return strip(a) === strip(b) || extends_(a, b) || extends_(b, a) || (VERB_FORMS.has(a) && VERB_FORMS.has(b))
+}
+
+/** Every form of the irregular verbs (rise, rose, risen…): swapping two of them is grammar, not spelling. */
+const VERB_FORMS = new Set(
+  Object.entries(IRREGULAR_VERBS).flatMap(([base, [past, pp]]) => [base, ...past.split('|'), ...pp.split('|')]),
+)
+
+/** A small spelling slip: 1 letter off in words of 4+ letters, 2 in words of 8+, never on protected words. */
+function isForgivableTypo(op: DiffOp, protect: ReadonlySet<string>): boolean {
   if (op.kind !== 'wrong') return false
   const a = op.text.toLowerCase()
   const b = op.expected.toLowerCase()
-  return a.length >= 5 && b.length >= 5 && levenshtein(a, b) <= 1
+  if (protect.has(b) || protect.has(a) || sameStemDifferentEnding(a, b)) return false
+  const len = Math.min(a.length, b.length)
+  if (len < 4) return false
+  return levenshtein(a, b) <= (len >= 8 ? 2 : 1)
 }
 
+const keyOf = (w: string) => compareWords(w).map((x) => x.key)
+
+/** Close enough in meaning mode: most words shared and every protected word present. */
+export const MEANING_ALMOST = 0.75
+
 /**
- * Check a typed answer against one or more accepted answers.
- * With typo tolerance, answers whose only differences are 1-letter typos in words of 5+ letters are "almost".
+ * Check a typed answer against one or more accepted answers (alternatives also inside each with //).
+ * Small spelling slips are forgiven (the target is speaking), except on the protected words.
  */
-export function checkAnswer(typed: string, accepted: readonly string[], opts: { typoTolerance: boolean }): CheckResult {
+export function checkAnswer(typed: string, accepted: readonly string[], opts: CheckOptions = {}): CheckResult {
+  const protect = new Set((opts.protect ?? []).flatMap(keyOf))
+  const tolerate = (opts.typos ?? 'tolerate') === 'tolerate'
   const rank = { correct: 0, almost: 1, wrong: 2 }
+  const typedKeys = new Set(compareWords(typed).map((w) => w.key))
   let best: (CheckResult & { cost: number }) | null = null
   for (const reference of accepted.flatMap((a) => a.split('//')).map((a) => a.trim()).filter(Boolean)) {
     const diff = wordDiff(typed, reference)
+    if (tolerate && onlyHyphensDiffer(typed, reference)) {
+      // "trade off" / "tradeoff" for "trade-off": spelling only.
+      const typos = diff.filter((d) => d.kind !== 'equal').map((d) => ({ typed: d.kind === 'missing' ? '' : d.text, expected: d.kind === 'wrong' ? d.expected : d.kind === 'missing' ? d.text : '' }))
+      const merged = { typed: typos.map((t) => t.typed).filter(Boolean).join(' '), expected: typos.map((t) => t.expected).filter(Boolean).join(' ') }
+      best = { verdict: 'correct', diff, reference, cost: 1, similarity: 1, typos: [merged] }
+      break
+    }
     const off = diff.filter((d) => d.kind !== 'equal')
-    const verdict: Verdict = off.length === 0 ? 'correct' : opts.typoTolerance && off.every(isTypo) ? 'almost' : 'wrong'
-    const cost = rank[verdict] * 1000 + off.length
-    if (!best || cost < best.cost) best = { verdict, diff, reference, cost }
+    const forgiven = tolerate ? off.filter((d) => isForgivableTypo(d, protect)) : []
+    const matched = diff.filter((d) => d.kind === 'equal').length + forgiven.length
+    const typedCount = diff.filter((d) => d.kind !== 'missing').length
+    const refCount = diff.filter((d) => d.kind !== 'extra').length
+    const similarity = typedCount + refCount ? (2 * matched) / (typedCount + refCount) : 0
+    let verdict: Verdict = off.length === forgiven.length ? 'correct' : 'wrong'
+    if (verdict === 'wrong' && opts.mode === 'meaning') {
+      const keepsPoint = [...protect].every((p) => typedKeys.has(p))
+      if (similarity >= MEANING_ALMOST && keepsPoint) verdict = 'almost'
+    }
+    const cost = rank[verdict] * 1000 + (off.length - forgiven.length) * 10 + forgiven.length
+    if (!best || cost < best.cost) {
+      best = {
+        verdict,
+        diff,
+        reference,
+        cost,
+        similarity,
+        typos: forgiven.map((d) => ({ typed: (d as { text: string }).text, expected: (d as { expected: string }).expected })),
+      }
+    }
   }
-  if (!best) return { verdict: 'wrong', diff: [], reference: '' }
-  return { verdict: best.verdict, diff: best.diff, reference: best.reference }
+  if (!best) return { verdict: 'wrong', diff: [], reference: '', typos: [], similarity: 0 }
+  const { cost: _, ...result } = best
+  return result
+}
+
+/** True when two answers differ only in hyphens (written as a space or left out), e.g. "trade off" vs "trade-off". */
+function onlyHyphensDiffer(a: string, b: string): boolean {
+  const x = normalizeAnswer(a)
+  const y = normalizeAnswer(b)
+  if (x === y || !/-/.test(x + y)) return false
+  const spaced = (s: string) => s.replace(/-/g, ' ')
+  const joined = (s: string) => s.replace(/-/g, '')
+  return spaced(x) === spaced(y) || joined(x) === joined(y)
+}
+
+/** Words of `right` that are not in `wrong`: the actual correction (what a fix exercise is about). */
+export function correctionWords(wrong: string, right: string): string[] {
+  const a = compareWords(wrong)
+  const b = compareWords(right)
+  const kept = new Set(lcsPairs(a.map((w) => w.key), b.map((w) => w.key)).map(([, j]) => j))
+  return b.filter((_, j) => !kept.has(j)).map((w) => w.display)
 }
 
 export interface SpeechCheck {

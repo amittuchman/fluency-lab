@@ -131,7 +131,7 @@ export function Home() {
             <div className="h-full bg-emerald-500" style={{ width: `${(data.readiness.ready / Math.max(1, data.readiness.total)) * 100}%` }} />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="muted text-xs">A card is ready after two correct answers in a row.</p>
+            <p className="muted text-xs">An item is ready after two correct answers in a row.</p>
             <Link
               to={`/drill/package/${data.latest.id}${data.readiness.ready < data.readiness.total ? '' : '?all=1'}`}
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">

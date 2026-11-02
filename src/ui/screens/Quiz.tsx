@@ -3,11 +3,12 @@ import { useSearchParams } from 'react-router'
 import { repos } from '../../data'
 import { markForRelearn } from '../../data/services'
 import { syncNow } from '../../sync/manager'
-import { buildPrompt, type Prompt } from '../../domain/prompt'
+import { buildPrompt, createPool } from '../../domain/exercises'
+import type { Prompt } from '../../domain/prompt'
 import { FORMAT_LABELS, pickQuizQuestions, quizTagTrends, type QuizQuestion } from '../../domain/quiz'
 import { dayEnd } from '../../domain/scheduler'
 import { tenseLabel } from '../../domain/tags'
-import type { QuizConfig, QuizFormat, QuizQuestionResult, QuizResult, QuizSource } from '../../domain/types'
+import type { Note, QuizConfig, QuizFormat, QuizQuestionResult, QuizResult, QuizSource } from '../../domain/types'
 import { newId } from '../../domain/util'
 import { StudyCard } from '../components/StudyCard'
 import { Button, Empty, PageHeader } from '../components/ui'
@@ -15,13 +16,13 @@ import { formatDate, formatDuration, pct } from '../format'
 import { useRepoQuery, useSettings } from '../hooks'
 import { useVoices } from '../speech'
 
-type Phase = { kind: 'setup' } | { kind: 'run'; questions: QuizQuestion[]; config: QuizConfig; startedAt: number } | { kind: 'done'; result: QuizResult; prompts: Map<string, Prompt> }
+type Phase = { kind: 'setup' } | { kind: 'run'; questions: QuizQuestion[]; config: QuizConfig; startedAt: number; allNotes: Note[] } | { kind: 'done'; result: QuizResult; prompts: Map<string, Prompt> }
 
 export function Quiz() {
   const [phase, setPhase] = useState<Phase>({ kind: 'setup' })
   if (phase.kind === 'run') return <QuizRun {...phase} onFinish={(result, prompts) => setPhase({ kind: 'done', result, prompts })} />
   if (phase.kind === 'done') return <QuizDone result={phase.result} prompts={phase.prompts} onAgain={() => setPhase({ kind: 'setup' })} />
-  return <QuizSetup onStart={(questions, config) => setPhase({ kind: 'run', questions, config, startedAt: Date.now() })} />
+  return <QuizSetup onStart={(questions, config, allNotes) => setPhase({ kind: 'run', questions, config, startedAt: Date.now(), allNotes })} />
 }
 
 function sourceLabel(s: QuizSource, pkgNames: Map<string, string>): string {
@@ -39,7 +40,7 @@ function sourceLabel(s: QuizSource, pkgNames: Map<string, string>): string {
   }
 }
 
-function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig) => void }) {
+function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig, allNotes: Note[]) => void }) {
   const settings = useSettings()
   const [params] = useSearchParams()
   const [kind, setKind] = useState<QuizSource['kind']>((params.get('tag') ? 'tag' : 'random') as QuizSource['kind'])
@@ -65,7 +66,7 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig) =>
     const [notes, cards, logs] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.logs.since(now - 30 * 86_400_000)])
     const questions = pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs: dayEnd(now, settings.rolloverHour) })
     if (!questions.length) setError('No questions match this source and these formats.')
-    else onStart(questions, config)
+    else onStart(questions, config, notes)
   }
 
   if (!data) return <p className="muted">Loading…</p>
@@ -187,14 +188,30 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig) =>
   )
 }
 
-function QuizRun({ questions, config, startedAt, onFinish }: { questions: QuizQuestion[]; config: QuizConfig; startedAt: number; onFinish: (r: QuizResult, p: Map<string, Prompt>) => void }) {
+function QuizRun({
+  questions,
+  config,
+  startedAt,
+  allNotes,
+  onFinish,
+}: {
+  questions: QuizQuestion[]
+  config: QuizConfig
+  startedAt: number
+  allNotes: Note[]
+  onFinish: (r: QuizResult, p: Map<string, Prompt>) => void
+}) {
   const settings = useSettings()
   const audioOn = useVoices().length > 0
   const [index, setIndex] = useState(0)
   const answers = useRef<QuizQuestionResult[]>([])
   const prompts = useMemo(
-    () => questions.map((q) => buildPrompt(q.note, q.card, { promptLanguage: settings.promptLanguage, audio: audioOn })),
-    [questions, settings.promptLanguage, audioOn],
+    () => {
+      // Same pool as when the questions were picked, so multiple choice gets the same distractors.
+      const pool = createPool(allNotes)
+      return questions.map((q) => buildPrompt(q.note, q.card, { promptLanguage: settings.promptLanguage, audio: audioOn, pool, exercise: q.exercise }))
+    },
+    [questions, settings.promptLanguage, audioOn, allNotes],
   )
   const [left, setLeft] = useState<number | null>(config.timerSeconds)
   const finished = useRef(false)
