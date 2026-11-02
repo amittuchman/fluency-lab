@@ -36,6 +36,8 @@ interface PromptBase {
   /** Main prompt text (above the input). */
   prompt?: string
   promptIsHebrew?: boolean
+  /** The Hebrew meaning, shown under an English prompt (a situation). */
+  promptHe?: string
   /** Sentence with a blank. */
   context?: Context
   hint?: string

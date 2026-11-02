@@ -1,4 +1,6 @@
 import { isReadyFromLogs } from '../domain/drill'
+import { repairDistractors } from '../domain/distractors'
+import { fillMissing } from '../domain/importPlan'
 import { duplicateKey } from '../domain/parser'
 import { dayEnd, dayStart, Scheduler } from '../domain/scheduler'
 import { nextLevel, levelOf } from '../domain/levels'
@@ -38,6 +40,20 @@ export async function initialize(repos: Repos, now = Date.now()): Promise<void> 
     await repos.transaction(async () => {
       for (const note of notes) await syncCards(repos, note, now)
       await repos.meta.set(META.templateVersion, TEMPLATE_VERSION)
+    })
+  }
+
+  // Once per device: wrong options written as fragments ("have study") become whole sentences. Only the
+  // options change; cards (level, FSRS) and history are not touched, and nothing is removed.
+  if (!(await repos.meta.get(META.distractorRepair))) {
+    const notes = [...(await repos.notes.all()), ...(await repos.notes.trashed())]
+    const repaired = notes.map(repairDistractors).filter((n): n is Note => n !== null)
+    if (repaired.length && !(await repos.meta.get(META.backupBeforeDistractorRepair))) {
+      await repos.meta.set(META.backupBeforeDistractorRepair, await exportBackup(repos, now))
+    }
+    await repos.transaction(async () => {
+      await repos.notes.putRepaired(repaired)
+      await repos.meta.set(META.distractorRepair, true)
     })
   }
 }
@@ -95,16 +111,21 @@ export async function duplicateIndex(repos: Repos): Promise<Map<string, Note>> {
 export interface ImportItem {
   content: NoteContent
   tags: string[]
-  /** create a new note, update an existing one, or skip. */
+  /**
+   * create a new note, update an existing one (only its missing fields and tags are filled in; nothing is
+   * overwritten and its progress is kept), or skip.
+   */
   action: 'create' | 'update' | 'skip'
   targetNoteId?: string
 }
 
 export interface ImportSummary {
-  packageId: string
+  packageId: string | null
   created: number
   updated: number
   skipped: number
+  /** Existing items the import had nothing new for. */
+  unchanged: number
   cards: number
 }
 
@@ -118,9 +139,8 @@ export async function importPackage(
   now = Date.now(),
 ): Promise<ImportSummary> {
   const pkg: Package = { id: newId(), name: input.name, createdAt: now, sourceText: input.sourceText }
-  const summary: ImportSummary = { packageId: pkg.id, created: 0, updated: 0, skipped: 0, cards: 0 }
+  const summary: ImportSummary = { packageId: null, created: 0, updated: 0, skipped: 0, unchanged: 0, cards: 0 }
   await repos.transaction(async () => {
-    await repos.packages.put(pkg)
     const created: Note[] = []
     for (const item of input.items) {
       if (item.action === 'skip') {
@@ -130,15 +150,22 @@ export async function importPackage(
       if (item.action === 'update' && item.targetNoteId) {
         const cur = await repos.notes.get(item.targetNoteId)
         if (cur) {
-          const next = { ...cur, ...item.content, tags: uniq([...cur.tags, ...item.tags]), packageId: pkg.id, updatedAt: now } as Note
-          await repos.notes.put(next)
-          summary.cards += await syncCards(repos, next, now)
-          summary.updated++
+          // Upgrade in place: same id, package and cards (level, FSRS, history untouched).
+          const filled = fillMissing(cur, item.content, item.tags)
+          if (filled) {
+            await repos.notes.put({ ...filled.note, updatedAt: now })
+            summary.updated++
+          } else summary.unchanged++
           continue
         }
       }
       // Stagger createdAt by 1 ms so new cards keep the package's order.
       created.push(makeNote(item.content, item.tags, pkg.id, now + created.length))
+    }
+    // A package holds the new items; an import that only upgrades existing ones creates none.
+    if (created.length) {
+      await repos.packages.put(pkg)
+      summary.packageId = pkg.id
     }
     await repos.notes.bulkPut(created)
     const cards: Card[] = []

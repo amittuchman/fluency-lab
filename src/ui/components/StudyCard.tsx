@@ -256,6 +256,11 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
           {prompt.prompt}
         </p>
       )}
+      {prompt.promptHe && (
+        <p className="he -mt-2 mb-3 text-lg" dir="rtl" lang="he">
+          {prompt.promptHe}
+        </p>
+      )}
 
       {prompt.context && (
         <p className="mb-3 text-xl leading-9">

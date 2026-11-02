@@ -24,10 +24,15 @@ export async function saveBackupFile(): Promise<boolean> {
   return saved
 }
 
-/** The automatic backup taken on this device just before the exercise update (if it had data then). */
-export async function savePreUpdateBackup(): Promise<boolean> {
-  const file = await repos.meta.get<BackupFile>(META.backupBeforeV3)
-  return file ? writeJsonFile(file, 'fluency-lab-backup-before-exercise-update.json') : false
+/** An automatic backup taken on this device just before an update changed its data (if it had data then). */
+export const PRE_UPDATE_BACKUPS = [
+  { key: META.backupBeforeV3, label: 'the exercise update', file: 'fluency-lab-backup-before-exercise-update.json' },
+  { key: META.backupBeforeDistractorRepair, label: 'wrong options were rewritten as whole sentences', file: 'fluency-lab-backup-before-options-repair.json' },
+] as const
+
+export async function savePreUpdateBackup(key: string, name: string): Promise<boolean> {
+  const file = await repos.meta.get<BackupFile>(key)
+  return file ? writeJsonFile(file, name) : false
 }
 
 async function writeJsonFile(data: unknown, name: string): Promise<boolean> {

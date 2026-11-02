@@ -19,8 +19,8 @@ async function answerOne(page: Page) {
 test('import a package, study, see it in stats, and it persists', async ({ page }) => {
   await page.goto('./#/add')
   await page.getByRole('button', { name: 'Paste the sample' }).click()
-  await expect(page.getByText(/48 new notes/)).toBeVisible()
-  await page.getByRole('button', { name: 'Confirm and save' }).click()
+  await expect(page.getByText(/48 new/)).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(page.getByText(/Saved “Sample/)).toBeVisible()
 
   await page.goto('./#/study')

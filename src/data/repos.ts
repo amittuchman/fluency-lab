@@ -15,6 +15,11 @@ export interface NoteRepo {
   bulkPut(notes: Note[]): Promise<void>
   bulkDelete(ids: string[]): Promise<void>
   count(): Promise<number>
+  /**
+   * Save an automatic data repair. The sync clock moves forward by 1 ms only (not to now), so it beats the
+   * unrepaired copy but never a real edit made on any device in the meantime.
+   */
+  putRepaired(notes: Note[]): Promise<void>
 }
 
 export interface CardRepo {
@@ -88,4 +93,7 @@ export const META = {
   cheatSheets: 'cheatSheets',
   /** Automatic full backup taken on this device just before the v3 exercise migration. */
   backupBeforeV3: 'backup:before-v3',
+  backupBeforeDistractorRepair: 'backup:before-distractor-repair',
+  /** Set once this device has rewritten fragment wrong options as whole sentences. */
+  distractorRepair: 'distractorRepair',
 } as const

@@ -307,6 +307,56 @@ describe('sync between two devices', () => {
     })
   })
 
+  describe('repair of fragment wrong options, on two devices', () => {
+    const fix: NoteContent = {
+      type: 'fix',
+      fields: { wrong: 'I study PPE for two and a half years.', right: 'I have studied PPE for two and a half years.', rule: 'r', distractors: ['have study', 'have studying'] },
+    }
+    const repairedDist = ['I have study PPE for two and a half years.', 'I have studying PPE for two and a half years.']
+    /** A note with fragment options on both devices, from before the repair existed. */
+    async function beforeRepair() {
+      const a = await device()
+      const b = await device()
+      const note = await createNote(a.repos, fix, [], null)
+      const [card] = await a.repos.cards.byNote(note.id)
+      await reviewCard(a.repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null })
+      await a.engine.sync()
+      await b.engine.sync()
+      for (const d of [a, b]) await d.db.meta.delete(META.distractorRepair)
+      return { a, b, note, card: (await a.repos.cards.get(card!.id))! }
+    }
+
+    it('both devices repair: one version everywhere, progress untouched, nothing left to push', async () => {
+      const { a, b, note, card } = await beforeRepair()
+      await initialize(a.repos)
+      await a.engine.sync()
+      await initialize(b.repos)
+      await b.engine.sync()
+      await a.engine.sync()
+      for (const d of [a, b]) {
+        expect((await d.repos.notes.all()).map((n) => n.fields)).toEqual([{ ...fix.fields, distractors: repairedDist }])
+        expect(await d.repos.cards.get(card.id)).toEqual(card)
+        expect(await d.db.dirty.count()).toBe(0)
+      }
+      expect(await cloudCount('notes')).toBe(1)
+      // A later start on either device does nothing.
+      for (const d of [a, b]) await initialize(d.repos)
+      expect((await a.db.dirty.count()) + (await b.db.dirty.count())).toBe(0)
+      expect((await a.repos.notes.get(note.id))!.fields).toEqual((await b.repos.notes.get(note.id))!.fields)
+    })
+
+    it('a device repairing an old copy later never overwrites a newer edit from the other device', async () => {
+      const { a, b, note } = await beforeRepair()
+      await initialize(a.repos)
+      await updateNote(a.repos, note.id, { ...fix, fields: { ...fix.fields, distractors: repairedDist, he: 'אני לומד PPE כבר שנתיים וחצי.' } } as NoteContent, [])
+      await a.engine.sync()
+      await initialize(b.repos) // B still has the old copy: it repairs that one first
+      await b.engine.sync()
+      await a.engine.sync()
+      for (const d of [a, b]) expect((await d.repos.notes.get(note.id))!.fields).toMatchObject({ he: 'אני לומד PPE כבר שנתיים וחצי.', distractors: repairedDist })
+    })
+  })
+
   it("accounts are isolated: another user's device sees none of it", async () => {
     const a = await device()
     await createNote(a.repos, vocab('private'), [], null)

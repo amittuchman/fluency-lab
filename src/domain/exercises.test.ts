@@ -188,6 +188,55 @@ describe('after a long break', () => {
   })
 })
 
+describe('multiple choice: options of one kind, and a real question', () => {
+  const studied = note({
+    type: 'fix',
+    fields: {
+      wrong: 'I study PPE for two and a half years.',
+      right: 'I have studied PPE for two and a half years.',
+      rule: 'Up to now, with "for": present perfect.',
+      prompt: 'Someone asks how long you have been studying PPE',
+      he: 'אני לומד PPE כבר שנתיים וחצי.',
+      distractors: ['have study', 'have studying'],
+    },
+  })
+  it('@fix L1: fragments become whole sentences, and the situation (with its Hebrew) is the question', () => {
+    const p = at(studied, 1)
+    expect(p).toMatchObject({ kind: 'choice', instruction: 'Which is the correct way to say it?', prompt: 'Someone asks how long you have been studying PPE', promptHe: 'אני לומד PPE כבר שנתיים וחצי.' })
+    if (p.kind !== 'choice') return
+    expect([...p.options].sort()).toEqual([
+      'I have studied PPE for two and a half years.',
+      'I have study PPE for two and a half years.',
+      'I have studying PPE for two and a half years.',
+      'I study PPE for two and a half years.',
+    ])
+  })
+  it('without a situation, the Hebrew is the question; with neither, the generic one stays', () => {
+    const heOnly = { ...studied, fields: { ...studied.fields, prompt: undefined } } as Note
+    expect(at(heOnly, 1)).toMatchObject({ prompt: 'אני לומד PPE כבר שנתיים וחצי.', promptIsHebrew: true })
+    expect(at(heOnly, 1).promptHe).toBeUndefined()
+    const bare = { ...studied, fields: { ...studied.fields, prompt: undefined, he: undefined } } as Note
+    expect(at(bare, 1)).toMatchObject({ instruction: 'Which one is correct?' })
+    expect(at(bare, 1).prompt).toBeUndefined()
+  })
+  it('@natural L1: the same', () => {
+    const n = note({ type: 'natural', fields: { mine: 'This is a very big problem.', natural: 'This is a serious problem.', prompt: 'A delay worries you', distractors: ['heavy', 'strong'] } })
+    const p = at(n, 1)
+    expect(p).toMatchObject({ instruction: 'Which is the most natural way to say it?', prompt: 'A delay worries you' })
+    if (p.kind === 'choice') expect([...p.options].sort()).toEqual(['This is a heavy problem.', 'This is a serious problem.', 'This is a strong problem.', 'This is a very big problem.'])
+  })
+  it('@vocab: a whole-sentence `dist:` is left out next to words', () => {
+    const v = note({ type: 'vocab', fields: { term: 'reluctant', definition: 'unwilling', examples: [], distractors: ['eager', 'He was very eager to commit.'] } })
+    const p = at(v, 2)
+    if (p.kind === 'choice') expect([...p.options].sort()).toEqual(['eager', 'reluctant'])
+  })
+  it('@cloze: a whole-sentence `dist:` is cut down to the part in the gap', () => {
+    const c = note({ type: 'cloze', fields: { text: 'The bank {{raised::raise}} interest rates again this month.', distractors: ['The bank rose interest rates again this month.', 'has risen'] } })
+    const p = at(c, 1)
+    if (p.kind === 'choice') expect([...p.options].sort()).toEqual(['has risen', 'raised', 'rose'])
+  })
+})
+
 it('every exercise on every level builds without errors for every item', () => {
   const pool = createPool(everything)
   for (const n of everything) {

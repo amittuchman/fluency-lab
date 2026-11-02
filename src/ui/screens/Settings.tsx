@@ -5,7 +5,7 @@ import { SCHEMA_VERSION } from '../../data/dexie'
 import { META } from '../../data/repos'
 import { validateBackup, type BackupValidation } from '../../domain/backup'
 import type { Settings as SettingsT } from '../../domain/types'
-import { saveBackupFile, savePreUpdateBackup } from '../backupFile'
+import { PRE_UPDATE_BACKUPS, saveBackupFile, savePreUpdateBackup } from '../backupFile'
 import { SyncSettings } from '../components/SyncSettings'
 import { Banner, Button, Confirm, PageHeader } from '../components/ui'
 import { formatDate } from '../format'
@@ -171,7 +171,10 @@ function AudioSection({ settings, save }: { settings: SettingsT; save: (patch: P
 
 function BackupSection() {
   const lastBackupAt = useRepoQuery(() => repos.meta.get<number>(META.lastBackupAt), [])
-  const hasPreUpdateBackup = useRepoQuery(async () => !!(await repos.meta.get(META.backupBeforeV3)), [])
+  const preUpdateBackups = useRepoQuery(async () => {
+    const present = await Promise.all(PRE_UPDATE_BACKUPS.map(async (b) => !!(await repos.meta.get(b.key))))
+    return PRE_UPDATE_BACKUPS.filter((_, i) => present[i])
+  }, [])
   const [validation, setValidation] = useState<BackupValidation | null>(null)
   const [confirmReplace, setConfirmReplace] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -190,14 +193,14 @@ function BackupSection() {
       <p className="muted text-sm">
         Everything is stored in this browser (and in your account, if sync is on). Last backup: {lastBackupAt ? formatDate(lastBackupAt) : 'never'}.
       </p>
-      {hasPreUpdateBackup && (
-        <p className="text-sm">
-          Before the exercise update this device saved a full backup automatically.{' '}
-          <button type="button" className="text-sky-700 underline dark:text-sky-300" onClick={() => void savePreUpdateBackup()}>
+      {preUpdateBackups?.map((b) => (
+        <p key={b.key} className="text-sm">
+          Before {b.label}, this device saved a full backup automatically.{' '}
+          <button type="button" className="text-sky-700 underline dark:text-sky-300" onClick={() => void savePreUpdateBackup(b.key, b.file)}>
             Download it
           </button>
         </p>
-      )}
+      ))}
       <div className="flex flex-wrap gap-2">
         <Button
           variant="primary"

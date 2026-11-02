@@ -116,6 +116,18 @@ export function createDexieRepos(db: FluencyDB): Repos {
       bulkPut: (ns) => write('notes', ns),
       bulkDelete: (ids) => remove('notes', ids),
       count: () => db.notes.filter((n) => n.deletedAt === null).count(),
+      putRepaired: async (ns) => {
+        if (!ns.length) return
+        const at = stamp()
+        await db.transaction('rw', db.notes, db.dirty, async () => {
+          for (const n of ns) {
+            const cur = (await db.notes.get(n.id)) as (Note & { _mtime?: number }) | undefined
+            if (cur) await db.notes.put({ ...n, _mtime: (cur._mtime ?? cur.updatedAt) + 1 } as unknown as Note)
+          }
+          await db.dirty.bulkPut(dirtyEntries('notes', ns.map((n) => n.id), at))
+        })
+        announceLocalChange()
+      },
     },
     cards: {
       get: async (id) => stripOne(await db.cards.get(id)),
