@@ -5,7 +5,7 @@ import { SCHEMA_VERSION } from '../../data/dexie'
 import { META } from '../../data/repos'
 import { validateBackup, type BackupValidation } from '../../domain/backup'
 import type { Settings as SettingsT } from '../../domain/types'
-import { saveBackupFile } from '../backupFile'
+import { saveBackupFile, savePreUpdateBackup } from '../backupFile'
 import { SyncSettings } from '../components/SyncSettings'
 import { Banner, Button, Confirm, PageHeader } from '../components/ui'
 import { formatDate } from '../format'
@@ -68,23 +68,6 @@ export function Settings() {
         </Row>
         <Row label="New day starts at" hint="Hour (0–23). Reviews before this hour count for the previous day.">
           <NumberInput value={settings.rolloverHour} min={0} max={23} onChange={(n) => save({ rolloverHour: Math.round(n) })} />
-        </Row>
-        <Row label="Unlock thresholds (days)" hint="Stability the previous card needs before the next, harder card unlocks.">
-          <div className="grid grid-cols-3 gap-1">
-            {settings.unlockThresholds.map((v, i) => (
-              <NumberInput
-                key={i}
-                value={v}
-                min={0}
-                max={365}
-                onChange={(n) => {
-                  const t = [...settings.unlockThresholds] as SettingsT['unlockThresholds']
-                  t[i] = n
-                  save({ unlockThresholds: t })
-                }}
-              />
-            ))}
-          </div>
         </Row>
         <Row label="Prompt language" hint="English-first shows Hebrew only after you answer.">
           <select className="input" value={settings.promptLanguage} onChange={(e) => save({ promptLanguage: e.target.value as SettingsT['promptLanguage'] })}>
@@ -188,6 +171,7 @@ function AudioSection({ settings, save }: { settings: SettingsT; save: (patch: P
 
 function BackupSection() {
   const lastBackupAt = useRepoQuery(() => repos.meta.get<number>(META.lastBackupAt), [])
+  const hasPreUpdateBackup = useRepoQuery(async () => !!(await repos.meta.get(META.backupBeforeV3)), [])
   const [validation, setValidation] = useState<BackupValidation | null>(null)
   const [confirmReplace, setConfirmReplace] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -204,8 +188,16 @@ function BackupSection() {
     <section className="card space-y-3" id="backup">
       <h2 className="font-medium">Backup</h2>
       <p className="muted text-sm">
-        Everything is stored only in this browser. Last backup: {lastBackupAt ? formatDate(lastBackupAt) : 'never'}.
+        Everything is stored in this browser (and in your account, if sync is on). Last backup: {lastBackupAt ? formatDate(lastBackupAt) : 'never'}.
       </p>
+      {hasPreUpdateBackup && (
+        <p className="text-sm">
+          Before the exercise update this device saved a full backup automatically.{' '}
+          <button type="button" className="text-sky-700 underline dark:text-sky-300" onClick={() => void savePreUpdateBackup()}>
+            Download it
+          </button>
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           variant="primary"

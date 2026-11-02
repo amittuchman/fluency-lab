@@ -140,6 +140,8 @@ describe('sync between two devices', () => {
     await b.engine.sync()
     expect(await terms(b)).toEqual(['offline'])
     expect(await b.repos.logs.all()).toHaveLength(1)
+    // The item's level progress travels with the card.
+    expect(await firstCard(b, note)).toMatchObject({ level: 1, cleanStreak: 1, fsrs: { reps: 1 } })
   })
 
   it('duplicate pushes change nothing; a review log is never overwritten', async () => {
@@ -217,8 +219,8 @@ describe('sync between two devices', () => {
     await a.engine.sync()
     await b.engine.sync()
     for (const d of [a, b]) {
-      const recog = (await d.repos.cards.byNote(note.id)).filter((c) => c.template === 'recog')
-      expect(recog.map((c) => c.id)).toEqual(['legacy-random-id'])
+      const items = (await d.repos.cards.byNote(note.id)).filter((c) => c.template === 'item')
+      expect(items.map((c) => c.id)).toEqual(['legacy-random-id'])
     }
   })
 
@@ -242,8 +244,8 @@ describe('sync between two devices', () => {
     await createNote(a.repos, vocab('one more'), [], null)
     await a.engine.sync()
     const r = await b.engine.sync()
-    // Only the new note and its 4 cards change locally; rows re-read inside the overlap window merge as "same".
-    expect(r.applied).toBe(1 + 4)
+    // Only the new note and its card change locally; rows re-read inside the overlap window merge as "same".
+    expect(r.applied).toBe(1 + 1)
     expect(await terms(b)).toHaveLength(6)
   })
 })

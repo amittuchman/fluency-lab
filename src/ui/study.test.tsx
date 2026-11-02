@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { db, repos } from '../data'
 import { createNote, initialize } from '../data/services'
-import { buildPrompt } from '../domain/prompt'
+import { buildPrompt } from '../domain/exercises'
 import { emptyFsrs } from '../domain/scheduler'
-import type { Card, Note } from '../domain/types'
+import type { Card, Level, Note } from '../domain/types'
 import { StudyCard } from './components/StudyCard'
 import { StudySession } from './screens/StudySession'
 
@@ -75,10 +75,11 @@ describe('StudyCard', () => {
     suspended: false,
     deletedAt: null,
   } as Note
-  const card = (template: string): Card => ({
-    id: 'c',
+  const card = (level: Level): Card => ({
+    id: 'n:item',
     noteId: 'n',
-    template,
+    template: 'item',
+    level,
     order: 0,
     fsrs: emptyFsrs(0),
     suspended: false,
@@ -94,7 +95,7 @@ describe('StudyCard', () => {
   it('hides Hebrew until the answer is revealed and grades with number keys', async () => {
     const user = userEvent.setup()
     const onDone = vi.fn()
-    render(<StudyCard prompt={buildPrompt(note, card('recog'), { promptLanguage: 'english' })} intervals={intervals} onDone={onDone} />)
+    render(<StudyCard prompt={buildPrompt(note, card(1), { promptLanguage: 'english' })} intervals={intervals} onDone={onDone} />)
     expect(screen.queryByText('מסויג')).not.toBeInTheDocument()
     await user.keyboard(' ')
     expect(screen.getByText('מסויג')).toBeInTheDocument()
@@ -125,7 +126,7 @@ describe('StudyCard', () => {
     vi.stubGlobal('webkitSpeechRecognition', FakeRecognition)
     const sentence = { ...note, type: 'sentence', fields: { text: 'It depends on how you define success.', he: 'זה תלוי איך מגדירים הצלחה.' } } as Note
     const onDone = vi.fn()
-    render(<StudyCard prompt={buildPrompt(sentence, card('speak'), { promptLanguage: 'english', speech: true })} intervals={intervals} onDone={onDone} />)
+    render(<StudyCard prompt={buildPrompt(sentence, card(4), { promptLanguage: 'english', speech: true })} intervals={intervals} onDone={onDone} />)
     await user.click(screen.getByRole('button', { name: /Speak/ }))
     expect(await screen.findByText(/Heard:/)).toBeInTheDocument()
     expect(screen.getByText(/Close: most words match/)).toBeInTheDocument()
@@ -135,13 +136,13 @@ describe('StudyCard', () => {
     vi.unstubAllGlobals()
   })
 
-  it('accepts a 1-letter typo on vocab as "almost" with Hard suggested', async () => {
+  it('forgives a spelling slip (the target is speaking), says so, and suggests Good', async () => {
     const user = userEvent.setup()
     const onDone = vi.fn()
-    render(<StudyCard prompt={buildPrompt(note, card('produce'), { promptLanguage: 'english' })} intervals={intervals} onDone={onDone} />)
+    render(<StudyCard prompt={buildPrompt(note, card(3), { promptLanguage: 'english' })} intervals={intervals} onDone={onDone} />)
     await user.type(screen.getByRole('textbox'), 'reluctent{Enter}')
-    expect(screen.getByText(/Almost/)).toBeInTheDocument()
+    expect(screen.getByText('Correct (spelling: reluctent → reluctant)')).toBeInTheDocument()
     await user.keyboard('{Enter}')
-    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ grade: 2, userAnswer: 'reluctent' }))
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ grade: 3, userAnswer: 'reluctent' }))
   })
 })

@@ -1,5 +1,7 @@
 import { dayEnd, dayStart } from './scheduler'
 import type { Card, Note, ReviewLog, Settings } from './types'
+import { patternKey } from './levels'
+import { isActiveCard } from './templates'
 import { groupBy } from './util'
 
 /** A card can be studied: live note, nothing suspended, unlocked, not buried. */
@@ -10,6 +12,7 @@ export function isStudyable(card: Card, note: Note | undefined, now: number): no
     !note.suspended &&
     !card.suspended &&
     card.unlocked &&
+    isActiveCard(card) &&
     (card.buriedUntil === null || card.buriedUntil <= now)
   )
 }
@@ -51,6 +54,15 @@ export function roundRobin<T>(items: readonly T[], group: (t: T) => string): T[]
   const out: T[] = []
   for (let i = 0; out.length < items.length; i++) for (const l of lists) if (i < l.length) out.push(l[i]!)
   return out
+}
+
+/**
+ * Keep items with the same mistake pattern together (so the pattern is drilled, not just one sentence);
+ * the pattern groups themselves are interleaved by type and tag.
+ */
+export function groupByPattern(cards: readonly Card[], notes: ReadonlyMap<string, Note>, keys: (c: Card) => [string, string]): Card[] {
+  const groups = groupBy(cards, (c) => patternKey(notes.get(c.noteId)!) || `solo:${c.id}`)
+  return interleave([...groups.values()], (g) => keys(g[0]!)).flat()
 }
 
 export interface TodayCounts {
@@ -143,7 +155,7 @@ export function buildDailyQueue({ cards, notes, todayLogs, settings, now }: Queu
     return [n.type, primaryTag(n)]
   }
   return {
-    queue: [...interleave(pri, keys), ...interleave(reviews, keys), ...interleave(news, keys)],
+    queue: [...interleave(pri, keys), ...groupByPattern(reviews, notes, keys), ...groupByPattern(news, notes, keys)],
     dueTotal: due.length,
     newTotal: fresh.length,
     dueToday: reviews.length + pri.length,

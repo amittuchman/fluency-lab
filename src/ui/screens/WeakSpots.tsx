@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { repos } from '../../data'
+import { isActiveCard } from '../../domain/templates'
 import { tagStats } from '../../domain/stats'
 import { Empty, PageHeader } from '../components/ui'
 import { pct } from '../format'
@@ -10,7 +11,8 @@ const WINDOW_DAYS = 30
 /** Tags ranked from weakest: lowest accuracy over the last 30 days, then most lapses. */
 export function WeakSpots() {
   const rows = useRepoQuery(async () => {
-    const [notes, cards, logs] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.logs.since(Date.now() - WINDOW_DAYS * 86_400_000)])
+    const [notes, allCards, logs] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.logs.since(Date.now() - WINDOW_DAYS * 86_400_000)])
+    const cards = allCards.filter(isActiveCard)
     return tagStats(notes, cards, logs)
       .filter((s) => s.reviews > 0 || s.lapses > 0)
       .sort((a, b) => (a.accuracy ?? 1) - (b.accuracy ?? 1) || b.lapses - a.lapses)

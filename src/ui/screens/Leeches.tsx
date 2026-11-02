@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { repos } from '../../data'
+import { isActiveCard } from '../../domain/templates'
 import { setCardSuspended } from '../../data/services'
 import { primaryText } from '../../domain/parser'
-import { templateLabel } from '../../domain/templates'
 import type { Card, Note } from '../../domain/types'
 import { EditNoteModal } from '../components/EditNoteModal'
 import { Button, Empty, PageHeader, TagList, TypeBadge } from '../components/ui'
@@ -12,7 +12,8 @@ import { useRepoQuery } from '../hooks'
 export function Leeches() {
   const [editing, setEditing] = useState<Note | null>(null)
   const rows = useRepoQuery(async () => {
-    const [notes, cards] = await Promise.all([repos.notes.all(), repos.cards.all()])
+    const [notes, allCards] = await Promise.all([repos.notes.all(), repos.cards.all()])
+    const cards = allCards.filter(isActiveCard)
     const byId = new Map(notes.map((n) => [n.id, n]))
     return cards
       .filter((c) => c.leech && byId.has(c.noteId))
@@ -48,7 +49,7 @@ function LeechRow({ card, note, onEdit }: { card: Card; note: Note; onEdit: () =
           <span>{primaryText(note)}</span>
         </div>
         <p className="muted mt-0.5 text-xs">
-          {templateLabel(card.template)} · {card.fsrs.lapses} lapses {card.suspended && '· suspended'}
+          Level L{card.level ?? 1} · {card.fsrs.lapses} lapses {card.suspended && '· suspended'}
         </p>
         <TagList tags={note.tags} />
       </div>

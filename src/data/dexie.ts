@@ -17,6 +17,10 @@ export type SyncTable = 'notes' | 'cards' | 'reviewLogs' | 'packages' | 'quizzes
 export const SYNCED_META = new Set(['cheatSheets'])
 /** Meta keys holding per-user sync state; never exported, never cleared by a backup restore. */
 export const SYNC_STATE_PREFIX = 'sync:'
+/** Device-only meta: sync state and automatic safety backups. Not in backup files, kept by a restore. */
+export function isDeviceOnlyMeta(key: string): boolean {
+  return key.startsWith(SYNC_STATE_PREFIX) || key.startsWith('backup:')
+}
 
 /** Outbox: one entry per local record changed (or deleted) since it was last pushed. */
 export interface DirtyEntry {
@@ -174,7 +178,7 @@ export function createDexieRepos(db: FluencyDB): Repos {
         announceLocalChange()
       },
       // Sync state is per device and per account: it never goes into a backup file.
-      all: async () => (await db.meta.toArray()).filter((m) => !m.key.startsWith(SYNC_STATE_PREFIX)).map(({ key, value }) => ({ key, value })),
+      all: async () => (await db.meta.toArray()).filter((m) => !isDeviceOnlyMeta(m.key)).map(({ key, value }) => ({ key, value })),
     },
     transaction: (fn) => db.transaction('rw', tables, fn),
     clearAll: async () => {
@@ -186,7 +190,7 @@ export function createDexieRepos(db: FluencyDB): Repos {
         for (const name of ['notes', 'cards', 'reviewLogs', 'packages', 'quizzes'] as const) {
           doomed.push(...dirtyEntries(name, (await db.syncTable(name).toCollection().primaryKeys()) as string[], at))
         }
-        const syncState = (await db.meta.toArray()).filter((m) => m.key.startsWith(SYNC_STATE_PREFIX))
+        const syncState = (await db.meta.toArray()).filter((m) => isDeviceOnlyMeta(m.key))
         await Promise.all([db.notes, db.cards, db.reviewLogs, db.packages, db.quizzes, db.settings, db.meta].map((t) => t.clear()))
         await db.meta.bulkPut(syncState)
         await db.dirty.bulkPut(doomed)

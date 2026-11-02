@@ -1,26 +1,11 @@
+import { availableExercises, createPool, QUIZ_FORMAT, type ExerciseId } from './exercises'
+import { isActiveCard } from './templates'
 import type { Card, Note, QuizConfig, QuizFormat, QuizResult, ReviewLog } from './types'
 import { groupBy, shuffle } from './util'
 
-/** Quiz format of each auto-checkable template; self-graded and audio templates are not quizzable. */
-export function quizFormat(template: string): QuizFormat | null {
-  if (template.startsWith('cloze:')) return 'cloze'
-  switch (template) {
-    case 'which-is-right':
-    case 'tense-choose':
-      return 'choice'
-    case 'cloze-use':
-    case 'chunk-cloze':
-    case 'natural-cloze':
-    case 'tense-fill':
-      return 'cloze'
-    case 'produce':
-    case 'recall-full':
-    case 'correct-it':
-    case 'upgrade':
-      return 'production'
-    default:
-      return null
-  }
+/** Quiz format of an exercise; flashcards, own sentences and speaking have no automatic check and are left out. */
+export function quizFormat(exercise: string): QuizFormat | null {
+  return QUIZ_FORMAT[exercise as ExerciseId] ?? null
 }
 
 export const FORMAT_LABELS: Record<QuizFormat, string> = {
@@ -43,6 +28,8 @@ export function weaknessScore(cards: readonly Card[], logs: readonly ReviewLog[]
 export interface QuizQuestion {
   note: Note
   card: Card
+  /** The exercise to ask (any level: a quiz is an assessment), in one of the chosen formats. */
+  exercise: ExerciseId
 }
 
 export interface PickInput {
@@ -75,7 +62,7 @@ export function pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs, r
       break
     case 'due':
       pool = shuffle(
-        live.filter((n) => (byNote.get(n.id) ?? []).some((c) => c.unlocked && !c.suspended && c.fsrs.state !== 0 && c.fsrs.due < dayEndTs)),
+        live.filter((n) => (byNote.get(n.id) ?? []).some((c) => isActiveCard(c) && !c.suspended && c.fsrs.state !== 0 && c.fsrs.due < dayEndTs)),
         rand,
       )
       break
@@ -92,15 +79,18 @@ export function pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs, r
       break
   }
 
+  const exercisePool = createPool(notes)
   const out: QuizQuestion[] = []
   for (const note of pool) {
     if (out.length >= config.length) break
-    const options = (byNote.get(note.id) ?? []).filter((c) => {
-      const f = quizFormat(c.template)
-      return !c.suspended && f !== null && config.formats.includes(f)
+    const card = (byNote.get(note.id) ?? []).find((c) => isActiveCard(c) && !c.suspended)
+    if (!card) continue
+    const exercises = availableExercises(note, card, { promptLanguage: 'english', pool: exercisePool }).filter((id) => {
+      const f = quizFormat(id)
+      return f !== null && config.formats.includes(f)
     })
-    if (!options.length) continue
-    out.push({ note, card: options[Math.floor(rand() * options.length)]! })
+    if (!exercises.length) continue
+    out.push({ note, card, exercise: exercises[Math.floor(rand() * exercises.length)]! })
   }
   return src.kind === 'weak' ? shuffle(out, rand) : out
 }

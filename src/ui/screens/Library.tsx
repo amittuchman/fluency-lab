@@ -2,6 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { repos } from '../../data'
+import { isActiveCard } from '../../domain/templates'
 import { addTags, moveToPackage, removeTag, setNotesSuspended, trashNotes } from '../../data/services'
 import { clozePlain } from '../../domain/cloze'
 import { primaryText } from '../../domain/parser'
@@ -67,7 +68,8 @@ export function Library() {
   }
 
   const data = useRepoQuery(async () => {
-    const [notes, cards, packages] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.packages.all()])
+    const [notes, allCards, packages] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.packages.all()])
+    const cards = allCards.filter(isActiveCard)
     return { notes, cards, packages }
   }, [])
 

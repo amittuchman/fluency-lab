@@ -2,7 +2,6 @@ import { clozeCount, clozePlain, parseCloze } from './cloze'
 import { normalizeTag, normalizeTense, tenseTag } from './tags'
 import { NOTE_TYPES, type NoteContent, type NoteType } from './types'
 import { straightenQuotes, uniq } from './util'
-import { findTermInExample } from './templates'
 
 export type LineStatus = 'ok' | 'warn' | 'error'
 
@@ -23,7 +22,11 @@ export interface ParseResult {
   items: ParsedItem[]
 }
 
-const KEYS = ['he', 'pos', 'rule', 'note', 'notes', 'tense', 'why', 'coll'] as const
+/**
+ * Keyed segments. The second row is optional data added for the exercise redesign; any item type can carry
+ * it, and lines without it import exactly as before.
+ */
+const KEYS = ['he', 'pos', 'rule', 'note', 'notes', 'tense', 'why', 'coll', 'pattern', 'dist', 'prompt', 'also'] as const
 type Key = (typeof KEYS)[number]
 const KEY_RE = new RegExp(`^(${KEYS.join('|')})\\s*:\\s*(.*)$`, 'i')
 const PACKAGE_RE = /^#\s*package\s*:\s*(.*)$/i
@@ -88,13 +91,44 @@ export function parseLine(rawLine: string, lineNo: number): ParsedItem {
     const km = KEY_RE.exec(seg)
     if (km) {
       const key = km[1]!.toLowerCase() as Key
-      keyed[key === 'notes' ? 'note' : key] = km[2]!.trim()
+      // `also:` may appear several times (one practice sentence each); the others keep the last value.
+      if (key === 'also') keyed.also = keyed.also ? `${keyed.also}; ${km[2]!.trim()}` : km[2]!.trim()
+      else keyed[key === 'notes' ? 'note' : key] = km[2]!.trim()
       continue
     }
     positional.push(seg)
   }
   const built = buildContent(type as NoteType, positional, keyed)
-  return finish(base, built.content, uniq([...tags, ...built.extraTags]), built.errors, built.warnings)
+  return finish(base, withExtras(built, keyed), uniq([...tags, ...built.extraTags]), built.errors, built.warnings)
+}
+
+const list = (v: string | undefined) =>
+  (v ?? '')
+    .split(/\s*;\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+/**
+ * Optional data any item may carry: he (Hebrew meaning), prompt (a situation), rule (short explanation),
+ * dist (wrong options for multiple choice, ;-separated), also (more practice sentences, ;-separated),
+ * pattern (the mistake pattern, stored as a `pattern:<name>` tag so related items are drilled together).
+ */
+function withExtras(built: Built, keyed: Partial<Record<Key, string>>): NoteContent | null {
+  const c = built.content
+  if (!c) return null
+  if (keyed.pattern) {
+    const tag = normalizeTag(`pattern-${keyed.pattern}`)
+    if (tag) built.extraTags.push(tag.replace(/^pattern-/, 'pattern:'))
+  }
+  const fields: Record<string, unknown> = { ...c.fields }
+  if (keyed.he && !fields.he) fields.he = keyed.he
+  if (keyed.prompt) fields.prompt = keyed.prompt
+  if (keyed.rule && c.type !== 'fix') fields.rule = keyed.rule
+  const dist = list(keyed.dist)
+  if (dist.length) fields.distractors = dist
+  const also = list(keyed.also)
+  if (also.length) fields.also = also
+  return { type: c.type, fields } as unknown as NoteContent
 }
 
 interface Built {
@@ -208,10 +242,7 @@ export function validateContent(content: NoteContent): { errors: string[]; warni
       const f = content.fields
       if (!f.term.trim()) errors.push('Missing term.')
       if (!f.definition.trim()) errors.push('Missing English definition.')
-      if (!f.examples.length) warnings.push('No example sentence, so no cloze card.')
-      else if (f.term && !f.examples.some((e) => findTermInExample(f.term, e))) {
-        warnings.push(`No example contains "${f.term}", so no cloze card.`)
-      }
+      if (!f.examples.length) warnings.push('No example sentence: the flashcard will have no context.')
       break
     }
     case 'sentence':
@@ -220,6 +251,7 @@ export function validateContent(content: NoteContent): { errors: string[]; warni
     case 'fix':
       if (!content.fields.wrong.trim() || !content.fields.right.trim()) errors.push('Need both the wrong and the right version.')
       if (!content.fields.rule.trim()) warnings.push('No rule. Add "rule: …" so the reveal can explain it.')
+      if ((content.fields.also ?? []).some((s) => !/(=>|->)/.test(s))) warnings.push('Each "also:" for @fix needs "wrong => right".')
       break
     case 'natural':
       if (!content.fields.mine.trim() || !content.fields.natural.trim()) errors.push('Need both your phrasing and the natural one.')
@@ -233,6 +265,7 @@ export function validateContent(content: NoteContent): { errors: string[]; warni
         const first = clozes[0]
         if (first && first.kind === 'cloze' && !first.hint) warnings.push('No base-verb hint ({{answer::verb}}); multiple choice falls back to typing.')
       }
+      if ((content.fields.also ?? []).some((s) => clozeCount(s) === 0)) warnings.push('Each "also:" for @tense needs the verb marked as {{answer::verb}}.')
       break
     }
     case 'cloze':
@@ -290,10 +323,14 @@ function parseJsonImport(text: string): ParseResult | null {
       .map(normalizeTag)
       .filter((t): t is string => !!t)
     const keyed: Partial<Record<Key, string>> = {}
-    for (const k of ['he', 'pos', 'rule', 'why'] as const) {
+    for (const k of ['he', 'pos', 'rule', 'why', 'pattern', 'prompt'] as const) {
       const v = str(o, k)
       if (v) keyed[k] = v
     }
+    const dist = strList(o.distractors ?? o.dist)
+    if (dist.length) keyed.dist = dist.join('; ')
+    const also = strList(o.also)
+    if (also.length) keyed.also = also.join('; ')
     const note = str(o, 'note', 'notes')
     if (note) keyed.note = note
     const tenseName = str(o, 'tense')
@@ -323,7 +360,7 @@ function parseJsonImport(text: string): ParseResult | null {
         break
     }
     const built = buildContent(type as NoteType, pos, keyed)
-    return finish(base, built.content, uniq([...tags, ...built.extraTags]), built.errors, built.warnings)
+    return finish(base, withExtras(built, keyed), uniq([...tags, ...built.extraTags]), built.errors, built.warnings)
   })
   return { format: 'json', packageName, items }
 }

@@ -21,6 +21,54 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
   )
 }
 
+/**
+ * Optional data that unlocks or sharpens exercises (Hebrew → L5 production, a situation prompt, a rule shown
+ * after every attempt, wrong options for multiple choice, more sentences with the same mistake).
+ */
+function ExerciseData({ content, set }: { content: NoteContent; set: (patch: Record<string, unknown>) => void }) {
+  const f = content.fields
+  const t = content.type
+  const hasHeField = t === 'vocab' || t === 'sentence'
+  const hasRuleField = t === 'fix'
+  const lines = (v: string) => v.split('\n')
+  return (
+    <details className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700" open={!!(f.prompt || f.distractors?.length || f.also?.length)}>
+      <summary className="cursor-pointer text-sm font-medium">Exercise data (optional)</summary>
+      <div className="mt-2 space-y-3">
+        {!hasHeField && (
+          <Field label="Hebrew meaning" hint="Enables “say it from Hebrew” at the top level.">
+            <input className="input he" dir="auto" value={f.he ?? ''} onChange={(e) => set({ he: e.target.value })} />
+          </Field>
+        )}
+        {t !== 'vocab' && (
+          <Field label="Situation" hint="When would you say it? Enables “say it in context”.">
+            <input className="input" value={f.prompt ?? ''} onChange={(e) => set({ prompt: e.target.value })} />
+          </Field>
+        )}
+        {!hasRuleField && t !== 'vocab' && (
+          <Field label="Rule" hint="Shown after every attempt.">
+            <input className="input" value={f.rule ?? ''} onChange={(e) => set({ rule: e.target.value })} />
+          </Field>
+        )}
+        {(t === 'vocab' || t === 'fix' || t === 'natural' || t === 'cloze') && (
+          <Field label="Wrong options for multiple choice" hint="One per line (otherwise other items are used where possible).">
+            <textarea className="input min-h-14" value={(f.distractors ?? []).join('\n')} onChange={(e) => set({ distractors: lines(e.target.value) })} />
+          </Field>
+        )}
+        {(t === 'fix' || t === 'tense') && (
+          <Field
+            label="More sentences with the same mistake"
+            hint={t === 'fix' ? 'One per line: wrong => right. Used for “same rule, new sentence”.' : 'One per line, verb marked: {{answer::verb}}.'}
+          >
+            <textarea className="input min-h-14" value={(f.also ?? []).join('\n')} onChange={(e) => set({ also: lines(e.target.value) })} />
+          </Field>
+        )}
+        <p className="muted text-xs">Mistake pattern: add a tag like pattern:since-for so related items are drilled together.</p>
+      </div>
+    </details>
+  )
+}
+
 export function NoteFields({ content, onChange, typeEditable }: Props) {
   const set = (patch: Record<string, unknown>) => onChange({ ...content, fields: { ...content.fields, ...patch } } as NoteContent)
   const v = validateContent(content)
@@ -49,7 +97,7 @@ export function NoteFields({ content, onChange, typeEditable }: Props) {
           <Field label="Definition (English)">
             <input className="input" value={content.fields.definition} onChange={(e) => set({ definition: e.target.value })} />
           </Field>
-          <Field label="Examples" hint="One per line. The first example that contains the term becomes a cloze card.">
+          <Field label="Examples" hint="One per line. The first one is shown with the word on its flashcard.">
             <textarea
               className="input min-h-16"
               value={content.fields.examples.join('\n')}
@@ -140,10 +188,12 @@ export function NoteFields({ content, onChange, typeEditable }: Props) {
       )}
 
       {content.type === 'cloze' && (
-        <Field label="Text" hint="{{answer}}, {{answer::hint}}, alternatives with //. Each {{…}} is its own card.">
+        <Field label="Text" hint="Blank only the exact point of the mistake: {{answer}}, {{answer::hint}}, alternatives with //.">
           <textarea className="input min-h-16" value={content.fields.text} onChange={(e) => set({ text: e.target.value })} autoFocus={typeEditable} />
         </Field>
       )}
+
+      <ExerciseData content={content} set={set} />
 
       {!pristine && (v.errors.length > 0 || v.warnings.length > 0) && (
         <ul className="space-y-0.5 text-sm">

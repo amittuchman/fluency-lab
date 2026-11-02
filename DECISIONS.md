@@ -216,3 +216,36 @@ Non-obvious choices, newest last. Each entry: what, and why.
     everything back.
 80. **"Secure password change" must stay off** in Supabase; otherwise changing a password would require an emailed
     code again.
+
+## Exercise redesign (one card per item, five levels)
+
+81. **One card per item instead of a chain of template cards.** The old design fixed the exercise by template
+    (recog → cloze → produce → …) and blanked random words. Now FSRS keeps deciding *when*; a per-item level
+    (L1–L5) decides *what*. Card id `<noteId>:item`, so two devices create the same card and sync merges it.
+82. **Level rule:** 2 clean answers (Good/Easy) in a row → up; 2 mistakes (Again) in a row → down; Hard breaks a
+    clean run without counting as a mistake. Levels move in drills too (a drill is real practice), not in quizzes
+    (a quiz is an assessment and may ask any level).
+83. **Long break = 7 days** since the last answer: the first exercise is the type's recall exercise (produce the
+    answer), not recognition.
+84. **Fallback by availability:** an exercise that needs missing data (`he:`, `prompt:`, `also:`, `dist:`, speech
+    recognition) is skipped and the nearest level's exercise is used. No exercise is ever built from guessed data;
+    there is no random cloze on @vocab or @sentence.
+85. **Vocab L4 is "use it in your own sentence", self-checked.** A free sentence can't be graded reliably offline;
+    the model examples are shown for comparison.
+86. **Sentence L4 is speaking** when the browser has speech recognition (Chrome / Edge / Android), else typing.
+87. **Typo tolerance:** 1 edit for 4–7 letter words, 2 for 8+; never on the word(s) the exercise is about, never an
+    inflection change (work/worked) or another irregular form (rise/rose). A forgiven typo is still "Correct",
+    with the spelling shown. `#spelling` vocab is checked strictly. Free answers (translate, produce, upgrade) are
+    graded on meaning: close + the key words present → "Almost" (Hard suggested) instead of "wrong".
+88. **New optional keys** (`he`, `prompt`, `rule` on any type, `dist`, `also`, `pattern`) are plain optional
+    fields: old blocks and old JSON import unchanged. `pattern:` becomes a tag so it's visible, filterable and
+    synced without a schema change. Error type is a normal tag (`#collocation`, `#word-choice`…).
+89. **Grouping:** related items (same `pattern:`, else same tense, else the same rule text) are queued
+    together; groups are interleaved by type as before.
+90. **Migration without deleting anything.** Old template cards stay in the database untouched (inactive, not
+    studied, not counted) and keep syncing. The new item card inherits the FSRS state of the note's best-learned
+    old card, and a starting level of min(3, number of old card types already reviewed). Before migrating, the
+    whole database is saved on the device (`meta` key `backup:before-v3`; never synced, never exported, never
+    cleared) and can be downloaded from Settings → Backup.
+91. **Unlock thresholds hidden in Settings** (the chain they controlled no longer exists); the stored value is
+    kept untouched. Daily limits, retention and session settings are unchanged.

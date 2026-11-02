@@ -1,38 +1,53 @@
 export const NOTE_TYPES = ['vocab', 'sentence', 'fix', 'natural', 'tense', 'cloze'] as const
 export type NoteType = (typeof NOTE_TYPES)[number]
 
-export interface VocabFields {
+/**
+ * Optional data any item may carry (import keys in brackets). All optional, so old imports keep working;
+ * each one unlocks or sharpens specific exercises.
+ */
+export interface ItemExtras {
+  /** [he:] Hebrew meaning of the correct sentence/word: enables "produce from Hebrew" exercises. */
+  he?: string
+  /** [prompt:] A situation in which you'd say it: enables "produce from the situation" exercises. */
+  prompt?: string
+  /** [rule:] Short explanation shown after every attempt. */
+  rule?: string
+  /** [dist:] Plausible wrong options for multiple choice (instead of guessed ones). */
+  distractors?: string[]
+  /** [also:] More practice sentences with the same mistake/rule, used for transfer exercises. */
+  also?: string[]
+}
+
+export interface VocabFields extends ItemExtras {
   term: string
   definition: string
   examples: string[]
-  he?: string
   pos?: string
   collocations?: string[]
   notes?: string
 }
-export interface SentenceFields {
+export interface SentenceFields extends ItemExtras {
   text: string
-  he?: string
   notes?: string
 }
-export interface FixFields {
+export interface FixFields extends ItemExtras {
   wrong: string
   right: string
   rule: string
 }
-export interface NaturalFields {
+export interface NaturalFields extends ItemExtras {
   mine: string
   natural: string
   note?: string
 }
-export interface TenseFields {
+export interface TenseFields extends ItemExtras {
   /** Sentence containing cloze markup, e.g. "I {{have been working::work}} here." */
   sentence: string
   /** Canonical tense name, e.g. "present-perfect-continuous". */
   tense: TenseName
   why?: string
 }
-export interface ClozeFields {
+export interface ClozeFields extends ItemExtras {
   text: string
 }
 
@@ -105,6 +120,15 @@ export interface Card {
    * max(last review, resetAt), so a reset or an undo is not overwritten by the older review state.
    */
   resetAt?: number
+  /**
+   * Exercise difficulty for this item, 1–5 (L1 recognize … L5 produce from Hebrew/situation, no support).
+   * Up after 2 clean answers in a row, down after 2 mistakes in a row. Missing on old cards = 1.
+   */
+  level?: Level
+  /** Clean answers in a row at the current level. */
+  cleanStreak?: number
+  /** Mistakes in a row at the current level. */
+  missStreak?: number
 }
 
 /** 1 Again, 2 Hard, 3 Good, 4 Easy (same values as ts-fsrs Rating). */
@@ -129,6 +153,9 @@ export interface ReviewLog {
   cardBefore: Card
   /** Side effects to revert on undo. */
   effects: { buried: string[]; unlocked: string[] }
+  /** Which exercise was shown, at which level (absent on logs from before the exercise redesign). */
+  exercise?: string
+  level?: Level
 }
 
 export interface Package {
@@ -205,3 +232,5 @@ export const DEFAULT_SETTINGS: Settings = {
 }
 
 export const LEECH_LAPSES = 6
+
+export type Level = 1 | 2 | 3 | 4 | 5

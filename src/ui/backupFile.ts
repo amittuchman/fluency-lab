@@ -1,5 +1,7 @@
 import { repos } from '../data'
 import { exportBackup, recordBackup } from '../data/backup'
+import { META } from '../data/repos'
+import type { BackupFile } from '../domain/backup'
 
 interface SaveFilePickerWindow {
   showSaveFilePicker?: (opts: {
@@ -14,11 +16,22 @@ interface SaveFilePickerWindow {
  */
 export async function saveBackupFile(): Promise<boolean> {
   const now = Date.now()
-  const file = await exportBackup(repos, now)
-  const blob = new Blob([JSON.stringify(file)], { type: 'application/json' })
   const d = new Date(now)
   const p = (n: number) => String(n).padStart(2, '0')
   const name = `fluency-lab-backup-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.json`
+  const saved = await writeJsonFile(await exportBackup(repos, now), name)
+  if (saved) await recordBackup(repos, now)
+  return saved
+}
+
+/** The automatic backup taken on this device just before the exercise update (if it had data then). */
+export async function savePreUpdateBackup(): Promise<boolean> {
+  const file = await repos.meta.get<BackupFile>(META.backupBeforeV3)
+  return file ? writeJsonFile(file, 'fluency-lab-backup-before-exercise-update.json') : false
+}
+
+async function writeJsonFile(data: unknown, name: string): Promise<boolean> {
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' })
   const picker = (window as unknown as SaveFilePickerWindow).showSaveFilePicker
   if (picker) {
     try {
@@ -38,6 +51,5 @@ export async function saveBackupFile(): Promise<boolean> {
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  await recordBackup(repos, now)
   return true
 }

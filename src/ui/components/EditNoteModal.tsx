@@ -3,7 +3,7 @@ import { repos } from '../../data'
 import { setCardSuspended, updateNote } from '../../data/services'
 import { validateContent } from '../../domain/parser'
 import { formatInterval } from '../../domain/scheduler'
-import { templateLabel } from '../../domain/templates'
+import { isActiveCard } from '../../domain/templates'
 import type { Card, Note, NoteContent } from '../../domain/types'
 import { useRepoQuery } from '../hooks'
 import { cleanContent, parseTags } from '../noteForm'
@@ -57,13 +57,15 @@ export function EditNoteModal({ note, onClose, showCards }: { note: Note; onClos
 
 function CardTable({ cards }: { cards: Card[] }) {
   const now = Date.now()
-  const sorted = [...cards].sort((a, b) => a.order - b.order || a.template.localeCompare(b.template))
+  // Only the item card is used; cards from before the exercise redesign are kept for history.
+  const sorted = cards.filter(isActiveCard)
+  const old = cards.length - sorted.length
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead className="muted text-xs">
           <tr>
-            <th className="py-1 pr-2 font-medium">Card</th>
+            <th className="py-1 pr-2 font-medium">Level</th>
             <th className="pr-2 font-medium">State</th>
             <th className="pr-2 font-medium">Due</th>
             <th className="pr-2 font-medium">Stability</th>
@@ -75,7 +77,7 @@ function CardTable({ cards }: { cards: Card[] }) {
           {sorted.map((c) => (
             <tr key={c.id} className="border-t border-slate-200 dark:border-slate-800">
               <td className="py-1.5 pr-2">
-                {templateLabel(c.template)}
+                L{c.level ?? 1}
                 {c.leech && <span className="ml-1 text-xs text-rose-600">leech</span>}
               </td>
               <td className="pr-2">{!c.unlocked ? 'Locked' : c.suspended ? 'Suspended' : STATE_LABEL[c.fsrs.state]}</td>
@@ -91,6 +93,7 @@ function CardTable({ cards }: { cards: Card[] }) {
           ))}
         </tbody>
       </table>
+      {old > 0 && <p className="muted mt-1 text-xs">{old} older card{old === 1 ? '' : 's'} from before the exercise update: kept, no longer used.</p>}
     </div>
   )
 }

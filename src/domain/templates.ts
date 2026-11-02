@@ -1,4 +1,4 @@
-import { clozeCount, clozePlain, hasCloze, parseCloze } from './cloze'
+import { clozePlain, hasCloze, parseCloze } from './cloze'
 import { lcsPairs, tokenize } from './checker'
 import { emptyFsrs } from './scheduler'
 import type { Card, Note, NoteContent, NoteType } from './types'
@@ -11,29 +11,15 @@ export interface TemplateSpec {
   contentHash: string
 }
 
-export const TEMPLATE_LABELS: Record<string, string> = {
-  recog: 'Recognize',
-  'cloze-use': 'Use in context',
-  produce: 'Produce the word',
-  dictation: 'Dictation',
-  'chunk-cloze': 'Complete the chunk',
-  'recall-full': 'Recall the sentence',
-  speak: 'Speak',
-  'which-is-right': 'Which is right?',
-  'correct-it': 'Correct it',
-  upgrade: 'Say it naturally',
-  'natural-cloze': 'Key phrase',
-  'tense-choose': 'Choose the tense',
-  'tense-fill': 'Fill the tense',
-}
-
+/** Old per-exercise card names (cards from before v3), for history views. */
 export function templateLabel(template: string): string {
-  if (template.startsWith('cloze:')) return `Cloze ${template.slice(6)}`
-  return TEMPLATE_LABELS[template] ?? template
+  if (template === ITEM_TEMPLATE) return 'Item'
+  if (template.startsWith('cloze:')) return `Old cloze ${template.slice(6)}`
+  return `Old card: ${template}`
 }
 
 /** Bumped when the template set changes, so existing notes get reconciled on startup. */
-export const TEMPLATE_VERSION = 2 // 2: dictation (vocab) and speak (sentence)
+export const TEMPLATE_VERSION = 3 // 3: one card per item with levels (old per-exercise cards kept, unused)
 
 const h = (...parts: string[]) => hashString(parts.join('␟'))
 
@@ -160,64 +146,37 @@ export function naturalKeyPhrase(mine: string, natural: string): Chunk | null {
   return best
 }
 
-export function templatesFor(content: NoteContent): TemplateSpec[] {
-  const chain = (list: Array<[string, string] | null>): TemplateSpec[] =>
-    list.filter((x): x is [string, string] => !!x).map(([template, contentHash], order) => ({ template, order, contentHash }))
+/**
+ * One card per item. The card carries the item's FSRS schedule and its level; the exercise shown is chosen
+ * from the level each time (./exercises). Before v3 every item had several cards (one per exercise form,
+ * unlocked in a chain); those old cards are kept untouched for history and are simply no longer used.
+ */
+export const ITEM_TEMPLATE = 'item'
 
+export function isActiveCard(card: Pick<Card, 'template'>): boolean {
+  return card.template === ITEM_TEMPLATE
+}
+
+/** What an item asks; when it changes on edit, the item's schedule and level restart. */
+function itemHash(content: NoteContent): string {
   switch (content.type) {
-    case 'vocab': {
-      const f = content.fields
-      const ex = vocabClozeExample(f)
-      return chain([
-        ['recog', h(f.term, f.definition)],
-        ex ? ['cloze-use', h(ex.example, f.term)] : null,
-        ['produce', h(f.definition, f.term)],
-        ['dictation', h('dictation', f.term)],
-      ])
-    }
-    case 'sentence': {
-      const t = content.fields.text
-      return chain([
-        ['chunk-cloze', h(t)],
-        ['recall-full', h(clozePlain(t))],
-        ['speak', h('speak', clozePlain(t))],
-      ])
-    }
-    case 'fix': {
-      const f = content.fields
-      return chain([
-        ['which-is-right', h(f.wrong, f.right)],
-        ['correct-it', h(f.wrong, f.right)],
-      ])
-    }
-    case 'natural': {
-      const f = content.fields
-      const hasKey = hasCloze(f.natural) || !!naturalKeyPhrase(f.mine, f.natural)
-      return chain([['upgrade', h(f.mine, clozePlain(f.natural))], hasKey ? ['natural-cloze', h(f.mine, f.natural)] : null])
-    }
-    case 'tense': {
-      const s = content.fields.sentence
-      return chain([
-        ['tense-choose', h(s, content.fields.tense)],
-        ['tense-fill', h(s, content.fields.tense)],
-      ])
-    }
-    case 'cloze': {
-      const t = content.fields.text
-      const n = clozeCount(t)
-      return Array.from({ length: n }, (_, i) => ({ template: `cloze:${i + 1}`, order: 0, contentHash: h(t, String(i + 1)) }))
-    }
+    case 'vocab':
+      return h(content.fields.term, content.fields.definition)
+    case 'sentence':
+      return h(clozePlain(content.fields.text))
+    case 'fix':
+      return h(content.fields.wrong, content.fields.right)
+    case 'natural':
+      return h(content.fields.mine, clozePlain(content.fields.natural))
+    case 'tense':
+      return h(content.fields.sentence, content.fields.tense)
+    case 'cloze':
+      return h(content.fields.text)
   }
 }
 
-/** Templates whose prompt is audio or speech; they fall back to text when the browser lacks support. */
-export function isAudioTemplate(template: string): boolean {
-  return template === 'dictation' || template === 'speak'
-}
-
-/** Self-graded templates cannot be auto-checked (excluded from quizzes). */
-export function isSelfGraded(template: string): boolean {
-  return template === 'recog'
+export function templatesFor(content: NoteContent): TemplateSpec[] {
+  return [{ template: ITEM_TEMPLATE, order: 0, contentHash: itemHash(content) }]
 }
 
 export function newCard(noteId: string, spec: TemplateSpec, now: number): Card {
@@ -235,22 +194,37 @@ export function newCard(noteId: string, spec: TemplateSpec, now: number): Card {
     contentHash: spec.contentHash,
     priority: false,
     createdAt: now,
+    level: 1,
+    cleanStreak: 0,
+    missStreak: 0,
   }
 }
 
-/** Threshold (stability in days) the card at chain position `order - 1` needs to unlock `order`. */
-export function unlockThreshold(order: number, thresholds: readonly number[]): number {
-  return thresholds[Math.min(order - 1, thresholds.length - 1)] ?? Infinity
+/**
+ * The item card for a note that so far had the old per-exercise cards: it inherits the schedule of the
+ * best-learned old card (highest stability), and a starting level from how many forms were already practised
+ * (at most L3). Nothing is taken from or written to the old cards.
+ */
+export function seedItemCard(noteId: string, spec: TemplateSpec, old: Card[], now: number): Card {
+  const card = newCard(noteId, spec, now)
+  if (!old.length) return card
+  const suspended = old.every((c) => c.suspended)
+  const priority = old.some((c) => c.priority)
+  const reviewed = old.filter((c) => c.fsrs.state !== 0)
+  if (!reviewed.length) return { ...card, suspended, priority }
+  const best = [...reviewed].sort((a, b) => b.fsrs.stability - a.fsrs.stability || (b.fsrs.lastReview ?? 0) - (a.fsrs.lastReview ?? 0))[0]!
+  const level = Math.min(3, Math.max(1, new Set(reviewed.map((c) => c.template)).size)) as Card['level']
+  return { ...card, fsrs: { ...best.fsrs }, level, leech: best.leech, suspended, priority }
 }
 
-/** Ids of locked cards whose predecessor in the chain is now stable enough. */
+/** Kept for the scheduler: with one card per item nothing is chained any more. */
 export function cardsToUnlock(siblings: Card[], thresholds: readonly number[]): string[] {
   const byOrder = new Map(siblings.map((c) => [c.order, c]))
   const out: string[] = []
   for (const c of siblings) {
     if (c.unlocked || c.order === 0) continue
     const prev = byOrder.get(c.order - 1)
-    if (prev && prev.unlocked && prev.fsrs.stability >= unlockThreshold(c.order, thresholds)) out.push(c.id)
+    if (prev && prev.unlocked && prev.fsrs.stability >= (thresholds[Math.min(c.order - 1, thresholds.length - 1)] ?? Infinity)) out.push(c.id)
   }
   return out
 }
@@ -258,54 +232,22 @@ export function cardsToUnlock(siblings: Card[], thresholds: readonly number[]): 
 export interface Reconciled {
   add: Card[]
   update: Card[]
-  remove: string[]
 }
 
 /**
- * Bring a note's cards in line with its current content. Cards whose content hash changed are reset
- * to new; unchanged cards keep their scheduling. Templates that no longer apply are removed.
+ * Make sure a note has its item card. When the note's content changed, the item restarts (new schedule,
+ * level 1); edits that don't change what is asked (tags, Hebrew, rule…) keep everything. Old per-exercise
+ * cards are never removed.
  */
-export function reconcileCards(note: Pick<Note, 'id'> & NoteContent, existing: Card[], now: number, thresholds: readonly number[]): Reconciled {
-  const specs = templatesFor(note)
-  const byTemplate = new Map(existing.map((c) => [c.template, c]))
-  const add: Card[] = []
-  const update: Card[] = []
-  const result: Card[] = []
-  for (const spec of specs) {
-    const cur = byTemplate.get(spec.template)
-    if (!cur) {
-      const c = newCard(note.id, spec, now)
-      add.push(c)
-      result.push(c)
-      continue
-    }
-    if (cur.contentHash !== spec.contentHash || cur.order !== spec.order) {
-      const changed = cur.contentHash !== spec.contentHash
-      const next: Card = {
-        ...cur,
-        order: spec.order,
-        contentHash: spec.contentHash,
-        ...(changed ? { fsrs: emptyFsrs(now), leech: false, resetAt: now } : {}),
-        unlocked: cur.unlocked || spec.order === 0,
-      }
-      update.push(next)
-      result.push(next)
-    } else result.push(cur)
+export function reconcileCards(note: Pick<Note, 'id'> & NoteContent, existing: Card[], now: number): Reconciled {
+  const spec = templatesFor(note)[0]!
+  const cur = existing.find((c) => c.template === ITEM_TEMPLATE)
+  if (!cur) return { add: [seedItemCard(note.id, spec, existing.filter((c) => !isActiveCard(c)), now)], update: [] }
+  if (cur.contentHash === spec.contentHash) return { add: [], update: [] }
+  return {
+    add: [],
+    update: [{ ...cur, contentHash: spec.contentHash, fsrs: emptyFsrs(now), leech: false, resetAt: now, level: 1, cleanStreak: 0, missStreak: 0 }],
   }
-  const keep = new Set(specs.map((s) => s.template))
-  const remove = existing.filter((c) => !keep.has(c.template)).map((c) => c.id)
-
-  for (const id of cardsToUnlock(result, thresholds)) {
-    const i = result.findIndex((x) => x.id === id)
-    const c: Card = { ...result[i]!, unlocked: true }
-    result[i] = c
-    const ai = add.findIndex((x) => x.id === id)
-    const ui = update.findIndex((x) => x.id === id)
-    if (ai >= 0) add[ai] = c
-    else if (ui >= 0) update[ui] = c
-    else update.push(c)
-  }
-  return { add, update, remove }
 }
 
 export function typeLabel(t: NoteType): string {

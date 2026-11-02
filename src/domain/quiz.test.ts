@@ -8,7 +8,7 @@ const NOW = new Date(2026, 9, 18, 12).getTime()
 const DAY = 86_400_000
 
 const note = (id: string, extra: Partial<Note> = {}): Note =>
-  ({ id, type: 'fix', fields: { wrong: 'a', right: 'b', rule: '' }, tags: ['x'], packageId: 'p1', createdAt: 0, updatedAt: 0, suspended: false, deletedAt: null, ...extra }) as Note
+  ({ id, type: 'fix', fields: { wrong: 'It depends of you.', right: 'It depends on you.', rule: 'depend on' }, tags: ['x'], packageId: 'p1', createdAt: 0, updatedAt: 0, suspended: false, deletedAt: null, ...extra }) as Note
 const card = (id: string, noteId: string, template: string, extra: Partial<Card> = {}): Card => ({
   id,
   noteId,
@@ -41,20 +41,22 @@ const log = (cardId: string, noteId: string, ts: number, correct: boolean, state
 })
 
 describe('quiz', () => {
-  it('maps templates to formats; self-graded ones are excluded', () => {
-    expect(quizFormat('which-is-right')).toBe('choice')
-    expect(quizFormat('cloze:2')).toBe('cloze')
-    expect(quizFormat('correct-it')).toBe('production')
-    expect(quizFormat('recog')).toBeNull()
+  it('maps exercises to formats; self-checked ones are excluded', () => {
+    expect(quizFormat('fix-choose')).toBe('choice')
+    expect(quizFormat('tense-fill')).toBe('cloze')
+    expect(quizFormat('fix-correct')).toBe('production')
+    expect(quizFormat('vocab-flash')).toBeNull()
+    expect(quizFormat('vocab-use')).toBeNull()
+    expect(quizFormat('sentence-speak')).toBeNull()
   })
 
   const notes = [note('a'), note('b', { packageId: 'p2', tags: ['y'] }), note('c', { suspended: true }), note('d', { deletedAt: 1 })]
   const cards = [
-    card('a1', 'a', 'which-is-right'),
-    card('a2', 'a', 'correct-it', { unlocked: false }),
-    card('b1', 'b', 'which-is-right', { fsrs: { ...emptyFsrs(0), lapses: 3, state: 2, due: NOW + 9 * DAY } }),
-    card('c1', 'c', 'which-is-right'),
-    card('d1', 'd', 'which-is-right'),
+    card('a:item', 'a', 'item', { level: 1 }),
+    card('a-old', 'a', 'correct-it'), // an old per-exercise card: never quizzed
+    card('b:item', 'b', 'item', { level: 1, fsrs: { ...emptyFsrs(0), lapses: 3, state: 2, due: NOW + 9 * DAY } }),
+    card('c:item', 'c', 'item'),
+    card('d:item', 'd', 'item'),
   ]
   const base = { notes, cards, logs: [], now: NOW, dayEndTs: NOW + DAY, rand: seededRandom('q') }
 
@@ -67,9 +69,11 @@ describe('quiz', () => {
     expect(weak.map((q) => q.note.id)).toEqual(['b'])
   })
 
-  it('respects the format mix and may use locked templates', () => {
+  it('respects the format mix and may ask any level, whatever the item is at', () => {
     const q = pickQuizQuestions({ ...base, config: { source: { kind: 'tag', tag: 'x' }, length: 10, formats: ['production'], timerSeconds: null } })
-    expect(q.map((x) => x.card.id)).toEqual(['a2'])
+    expect(q.map((x) => [x.card.id, x.exercise])).toEqual([['a:item', 'fix-correct']])
+    const c = pickQuizQuestions({ ...base, config: { source: { kind: 'tag', tag: 'x' }, length: 10, formats: ['choice'], timerSeconds: null } })
+    expect(['fix-choose', 'fix-spot']).toContain(c[0]!.exercise)
   })
 
   it('caps the length', () => {
