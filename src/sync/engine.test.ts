@@ -1,10 +1,12 @@
 // @vitest-environment node
 import type { PGlite } from '@electric-sql/pglite'
 import { createDexieRepos, FluencyDB } from '../data/dexie'
-import type { Repos } from '../data/repos'
-import { createNote, importPackage, initialize, purgeNotes, reviewCard, trashNotes, undoLastReview, updateNote } from '../data/services'
+import { META, type Repos } from '../data/repos'
+import { createNote, importPackage, initialize, makeNote, purgeNotes, reviewCard, trashNotes, undoLastReview, updateNote } from '../data/services'
 import { parseImport } from '../domain/parser'
-import type { Note, NoteContent } from '../domain/types'
+import { emptyFsrs } from '../domain/scheduler'
+import { isActiveCard, newCard } from '../domain/templates'
+import type { Card, Note, NoteContent } from '../domain/types'
 import { SyncEngine } from './engine'
 import { addUser, asUser, createTestDatabase } from './testing/pgSupabase'
 import { PgRemote } from './testing/pgRemote'
@@ -205,23 +207,104 @@ describe('sync between two devices', () => {
     for (const d of [a, b]) expect((await d.repos.cards.get(id))!.fsrs.reps).toBe(0)
   })
 
-  it('two copies of the same card (created separately on each device) collapse into one', async () => {
+  it('two copies of the same card (old cards created separately on each device) collapse into one', async () => {
     const a = await device()
     const b = await device()
     const note = await createNote(a.repos, vocab('hedge'), [], null)
+    // Before ids were deterministic, each device gave the same note's card its own random id.
+    const old = { ...newCard(note.id, { template: 'recog', order: 0, contentHash: 'h' }, T0), id: 'random-id-a' }
+    await a.repos.cards.put(old)
     await a.engine.sync()
     await b.engine.sync()
-    // Simulate an old-style random id on B for the same note + template, with a newer review.
-    const original = await firstCard(b, note)
-    await b.db.cards.delete(original.id)
-    await b.repos.cards.put({ ...original, id: 'legacy-random-id', fsrs: { ...original.fsrs, reps: 3, lastReview: T0 + 9_000, state: 2 } })
+    await b.db.cards.delete(old.id)
+    await b.repos.cards.put({ ...old, id: 'legacy-random-id', fsrs: { ...old.fsrs, reps: 3, lastReview: T0 + 9_000, state: 2 } })
     await b.engine.sync()
     await a.engine.sync()
     await b.engine.sync()
     for (const d of [a, b]) {
-      const items = (await d.repos.cards.byNote(note.id)).filter((c) => c.template === 'item')
-      expect(items.map((c) => c.id)).toEqual(['legacy-random-id'])
+      const twins = (await d.repos.cards.byNote(note.id)).filter((c) => c.template === 'recog')
+      expect(twins.map((c) => c.id)).toEqual(['legacy-random-id'])
     }
+  })
+
+  describe('the update to one card per item, on two devices', () => {
+    /** Data from before the update, synced to both devices; each device still has to run the migration. */
+    async function oldData() {
+      const a = await device()
+      const b = await device()
+      const note = makeNote(vocab('hedge'), [], null, T0)
+      const old = (template: string, order: number, fsrs: Partial<Card['fsrs']> = {}): Card => ({
+        ...newCard(note.id, { template, order, contentHash: 'h' }, T0),
+        fsrs: { ...emptyFsrs(T0), ...fsrs },
+      })
+      const oldCards = [old('recog', 0, { state: 2, stability: 9, difficulty: 5, reps: 4, lastReview: T0 - 86_400_000 }), old('cloze-use', 1, { state: 2, stability: 2, difficulty: 5, reps: 1, lastReview: T0 - 86_400_000 }), old('produce', 2)]
+      await a.repos.notes.put(note)
+      await a.repos.cards.bulkPut(oldCards)
+      await a.engine.sync()
+      await b.engine.sync()
+      for (const d of [a, b]) await d.repos.meta.set(META.templateVersion, 2)
+      return { a, b, note, oldCards }
+    }
+    const item = async (d: Device, note: Note) => (await d.repos.cards.byNote(note.id)).filter(isActiveCard)
+    const study = async (d: Device, note: Note, times: number) => {
+      for (let i = 0; i < times; i++) {
+        const [card] = await item(d, note)
+        await reviewCard(d.repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: Date.now() - (times - i) * 60_000 })
+      }
+    }
+    async function expectOneItemWithProgress(devices: Device[], note: Note, oldCards: Card[], reps: number) {
+      for (const d of devices) {
+        const items = await item(d, note)
+        expect(items.map((c) => c.id)).toEqual([`${note.id}:item`])
+        expect(items[0]!.fsrs.reps).toBe(reps)
+        const cards = await d.repos.cards.byNote(note.id)
+        for (const c of oldCards) expect(cards.find((x) => x.id === c.id)).toMatchObject({ template: c.template, fsrs: c.fsrs })
+      }
+      expect(await cloudCount('cards')).toBe(oldCards.length + 1)
+    }
+
+    it('both devices migrate: one item card, and progress made on one device is never overwritten', async () => {
+      const { a, b, note, oldCards } = await oldData()
+      await initialize(a.repos)
+      await study(a, note, 2) // the desktop moves on: 4 + 2 reviews
+      await a.engine.sync()
+      await initialize(b.repos) // the phone opens the new version later and seeds its own copy
+      await b.engine.sync()
+      await a.engine.sync()
+      await expectOneItemWithProgress([a, b], note, oldCards, 6)
+      for (const d of [a, b]) expect((await item(d, note))[0]!.level).toBe(3) // L2 from old progress, +1 after 2 clean answers
+
+      // Opening the app again changes nothing.
+      for (const d of [a, b]) await initialize(d.repos)
+      expect(await a.db.dirty.count()).toBe(0)
+      expect(await b.db.dirty.count()).toBe(0)
+    })
+
+    it('the item card arriving before the phone migrates is kept as it is', async () => {
+      const { a, b, note, oldCards } = await oldData()
+      await initialize(a.repos)
+      await study(a, note, 1)
+      await a.engine.sync()
+      await b.engine.sync()
+      await initialize(b.repos)
+      await b.engine.sync()
+      await a.engine.sync()
+      await expectOneItemWithProgress([a, b], note, oldCards, 5)
+    })
+
+    it('a device still on the old app that removes the item card does not lose it', async () => {
+      const { a, b, note, oldCards } = await oldData()
+      await initialize(a.repos)
+      await study(a, note, 2)
+      await a.engine.sync()
+      await b.engine.sync()
+      // The old app drops card types it doesn't know when a note is edited, and syncs the deletion.
+      await b.repos.cards.bulkDelete([`${note.id}:item`])
+      await b.engine.sync()
+      await a.engine.sync()
+      await b.engine.sync()
+      await expectOneItemWithProgress([a, b], note, oldCards, 6)
+    })
   })
 
   it("accounts are isolated: another user's device sees none of it", async () => {

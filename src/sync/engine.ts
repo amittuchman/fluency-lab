@@ -1,4 +1,5 @@
 import { stamp } from '../data/changes'
+import { ITEM_TEMPLATE } from '../domain/templates'
 import { dirtyEntries, SYNC_STATE_PREFIX, SYNCED_META, type DirtyEntry, type FluencyDB, type SyncTable } from '../data/dexie'
 import { APPEND_ONLY, clockOf, decide, fromRemote, localOf, REMOTE_OF, REMOTE_TABLES, toOutRow, type OutRow, type RemoteRow, type RemoteTable } from './model'
 
@@ -103,6 +104,10 @@ export class SyncEngine {
             break
           }
           case 'delete-local':
+            if (table === 'cards' && (await this.keepItemCard(local!, row))) {
+              changed++
+              break
+            }
             await store.delete(id)
             await db.dirty.delete(key)
             changed++
@@ -117,6 +122,22 @@ export class SyncEngine {
       }
     })
     return changed
+  }
+
+  /**
+   * An item card is only ever deleted together with its note (a permanent delete; notes are pulled before
+   * cards, so the note is already gone here). A deletion of the item card of a note that still exists comes
+   * from a device still running the pre-v3 app, which removed card types it didn't know. Keep the card and
+   * push it back with a clock newer than that deletion, so the progress isn't lost on any device.
+   */
+  private async keepItemCard(local: Rec, row: RemoteRow): Promise<boolean> {
+    const noteId = local.noteId as string
+    if (local.template !== ITEM_TEMPLATE || local.id !== `${noteId}:${ITEM_TEMPLATE}` || !(await this.db.notes.get(noteId))) return false
+    const deletedAt = row.deleted_at ? Date.parse(row.deleted_at) : 0
+    const at = stamp()
+    await this.db.cards.put({ ...local, resetAt: Math.max(at, deletedAt + 1), _mtime: at } as never)
+    await this.db.dirty.put(dirtyEntries('cards', [local.id as string], at)[0]!)
+    return true
   }
 
   /**
