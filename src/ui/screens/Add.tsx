@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router'
 import { repos } from '../../data'
 import { sampleText } from '../../data/sample'
 import { createNote, duplicateIndex, importPackage, type ImportItem, type ImportSummary } from '../../data/services'
-import { defaultPackageName, duplicateKey, parseImport, parseLine, primaryText, validateContent, type ParsedItem } from '../../domain/parser'
+import { planImport, type LineStatus } from '../../domain/importPlan'
+import { defaultPackageName, parseImport, parseLine, primaryText, validateContent, type ParsedItem } from '../../domain/parser'
 import { buildPrompt, createPool, EXERCISE_LABELS, type ExerciseId } from '../../domain/exercises'
 import { newCard, templatesFor } from '../../domain/templates'
 import { NOTE_TYPES, type Level, type Note, type NoteContent } from '../../domain/types'
@@ -49,12 +50,10 @@ const IMPORT_TEMPLATE = `# Package: <date> – <topic>
 @cloze <sentence with {{answer}} or {{answer//alternative::hint}}> | dist: <wrong option>; <wrong option> | #<tag>
 `
 
-type DupChoice = 'skip' | 'update' | 'keep'
-
 interface Row {
   item: ParsedItem
-  dupOf: { note?: Note; line?: number } | null
-  choice: DupChoice
+  /** New item, upgrade of a library item, nothing new, or a repeat of an earlier line. */
+  status: LineStatus | null
   cards: number
 }
 
@@ -63,7 +62,6 @@ function ImportPane() {
   const deferred = useDeferredValue(text)
   const [name, setName] = useState<string | null>(null)
   const [overrides, setOverrides] = useState<Record<number, string>>({})
-  const [choices, setChoices] = useState<Record<number, DupChoice>>({})
   const [editing, setEditing] = useState<number | null>(null)
   const [onlyProblems, setOnlyProblems] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -73,44 +71,36 @@ function ImportPane() {
 
   const parsed = useMemo(() => parseImport(deferred), [deferred])
 
-  const rows: Row[] = useMemo(() => {
-    const seen = new Map<string, number>()
-    return parsed.items.map((orig) => {
-      const item = overrides[orig.lineNo] !== undefined ? parseLine(overrides[orig.lineNo]!, orig.lineNo) : orig
-      let dupOf: Row['dupOf'] = null
-      if (item.content) {
-        const key = duplicateKey(item.content)
-        const existing = dupIndex?.get(key)
-        if (existing) dupOf = { note: existing }
-        else if (seen.has(key)) dupOf = { line: seen.get(key)! }
-        if (!seen.has(key)) seen.set(key, item.lineNo)
-      }
-      return { item, dupOf, choice: choices[item.lineNo] ?? 'skip', cards: item.content ? templatesFor(item.content).length : 0 }
-    })
-  }, [parsed, overrides, choices, dupIndex])
-
-  const plan = rows.map((r): (ImportItem & { lineNo: number }) | null => {
-    if (!r.item.content) return null
-    const action: ImportItem['action'] = !r.dupOf ? 'create' : r.choice === 'skip' ? 'skip' : r.choice === 'update' && r.dupOf.note ? 'update' : 'create'
-    return { lineNo: r.item.lineNo, content: r.item.content, tags: r.item.tags, action, ...(action === 'update' ? { targetNoteId: r.dupOf!.note!.id } : {}) }
-  })
+  const items = useMemo(
+    () => parsed.items.map((orig) => (overrides[orig.lineNo] !== undefined ? parseLine(overrides[orig.lineNo]!, orig.lineNo) : orig)),
+    [parsed, overrides],
+  )
+  // Existing items (same type and main text) are upgraded, never duplicated.
+  const plan = useMemo(
+    () => planImport(items.flatMap((i) => (i.content ? [{ lineNo: i.lineNo, content: i.content, tags: i.tags }] : [])), dupIndex ?? new Map()),
+    [items, dupIndex],
+  )
+  const rows: Row[] = items.map((item) => ({ item, status: plan.status.get(item.lineNo) ?? null, cards: item.content ? templatesFor(item.content).length : 0 }))
   const counts = {
-    create: plan.filter((p) => p?.action === 'create').length,
-    update: plan.filter((p) => p?.action === 'update').length,
-    skip: plan.filter((p) => p?.action === 'skip').length,
+    create: plan.create.length,
+    update: plan.update.length,
+    unchanged: plan.unchanged,
     errors: rows.filter((r) => !r.item.content).length,
     warnings: rows.filter((r) => r.item.status === 'warn').length,
-    cards: rows.reduce((s, r, i) => s + (plan[i]?.action === 'create' ? r.cards : 0), 0),
   }
   const pkgName = name ?? parsed.packageName ?? defaultPackageName()
-  const problems = (r: Row) => r.item.status !== 'ok' || r.dupOf !== null
+  const problems = (r: Row) => r.item.status !== 'ok' || (r.status !== null && r.status.kind !== 'new')
   const shown = (onlyProblems ? rows.filter(problems) : rows).slice(0, onlyProblems ? undefined : 300)
 
   const save = async () => {
     setSaving(true)
-    const items = plan.filter((p): p is ImportItem & { lineNo: number } => !!p)
-    const summary = await importPackage(repos, { name: pkgName, sourceText: text, items })
-    setDone({ ...summary, name: pkgName })
+    const importItems: ImportItem[] = [
+      ...plan.create.map((c) => ({ content: c.content, tags: c.tags, action: 'create' as const })),
+      ...plan.update.map((u) => ({ content: { type: u.note.type, fields: u.note.fields } as NoteContent, tags: u.note.tags, action: 'update' as const, targetNoteId: u.note.id })),
+    ]
+    const summary = await importPackage(repos, { name: pkgName, sourceText: text, items: importItems })
+    // Items with nothing new aren't sent to the import at all; count them here.
+    setDone({ ...summary, unchanged: summary.unchanged + plan.unchanged, name: pkgName })
     setSaving(false)
   }
 
@@ -119,12 +109,14 @@ function ImportPane() {
       <div className="card space-y-3">
         <p className="text-lg font-medium">Saved “{done.name}”</p>
         <p className="text-sm">
-          {done.created} new notes, {done.updated} updated, {done.skipped} skipped · {done.cards} new cards.
+          {done.created} new, {done.updated} updated, {done.unchanged} unchanged.
         </p>
         <div className="flex flex-wrap gap-2">
-          <Link to={`/drill/package/${done.packageId}`} className="rounded-lg bg-sky-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-sky-700">
-            Drill this package
-          </Link>
+          {done.packageId && (
+            <Link to={`/drill/package/${done.packageId}`} className="rounded-lg bg-sky-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-sky-700">
+              Drill this package
+            </Link>
+          )}
           <Link to="/study" className="rounded-lg border border-slate-300 px-3.5 py-2 text-sm font-medium hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
             Daily session
           </Link>
@@ -134,7 +126,6 @@ function ImportPane() {
               setText('')
               setName(null)
               setOverrides({})
-              setChoices({})
             }}
           >
             Import another
@@ -218,23 +209,18 @@ function ImportPane() {
               <input className="input" value={pkgName} onChange={(e) => setName(e.target.value)} />
             </label>
             <p className="text-sm">
-              <strong>{counts.create}</strong> new notes ({counts.cards} cards)
-              {counts.update > 0 && (
-                <>
-                  , <strong>{counts.update}</strong> updates
-                </>
-              )}
-              {counts.skip > 0 && <>, {counts.skip} skipped duplicates</>}
+              <strong>{counts.update}</strong> {counts.update === 1 ? 'item' : 'items'} will be updated, <strong>{counts.create}</strong> new,{' '}
+              <strong>{counts.unchanged}</strong> unchanged
               {counts.errors > 0 && <span className="text-rose-700 dark:text-rose-300">, {counts.errors} lines with errors (not saved)</span>}
               {counts.warnings > 0 && <span className="text-amber-700 dark:text-amber-300">, {counts.warnings} with warnings</span>}.
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="primary" onClick={() => void save()} disabled={saving || counts.create + counts.update === 0}>
-                {saving ? 'Saving…' : 'Confirm and save'}
+              <Button variant="primary" onClick={() => void save()} disabled={saving || !dupIndex || counts.create + counts.update === 0}>
+                {saving ? 'Saving…' : 'Confirm'}
               </Button>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
-                Only show problems and duplicates
+                Only show problems and existing items
               </label>
             </div>
           </div>
@@ -247,7 +233,7 @@ function ImportPane() {
                   <th className="px-2 font-medium">Status</th>
                   <th className="px-2 font-medium">Item</th>
                   <th className="px-2 font-medium">Cards</th>
-                  <th className="px-2 font-medium">Duplicate</th>
+                  <th className="px-2 font-medium">In library</th>
                 </tr>
               </thead>
               <tbody>
@@ -259,7 +245,6 @@ function ImportPane() {
                     editing={editing === r.item.lineNo}
                     onEdit={() => setEditing(editing === r.item.lineNo ? null : r.item.lineNo)}
                     onChangeLine={(raw) => setOverrides((o) => ({ ...o, [r.item.lineNo]: raw }))}
-                    onChoice={(c) => setChoices((s) => ({ ...s, [r.item.lineNo]: c }))}
                   />
                 ))}
               </tbody>
@@ -278,16 +263,14 @@ function ImportRow({
   editing,
   onEdit,
   onChangeLine,
-  onChoice,
 }: {
   row: Row
   editable: boolean
   editing: boolean
   onEdit: () => void
   onChangeLine: (raw: string) => void
-  onChoice: (c: DupChoice) => void
 }) {
-  const { item, dupOf } = row
+  const { item, status } = row
   const icon = { ok: ['✓', 'text-emerald-600'], warn: ['!', 'text-amber-600'], error: ['✕', 'text-rose-600'] }[item.status]
   return (
     <tr className="border-b border-slate-100 align-top last:border-0 dark:border-slate-800/60">
@@ -339,16 +322,9 @@ function ImportRow({
       </td>
       <td className="px-2 py-2 tabular-nums">{row.cards || '–'}</td>
       <td className="px-2 py-2">
-        {dupOf && (
-          <div className="space-y-1">
-            <span className="muted block text-xs">{dupOf.note ? 'Already in library' : `Same as line ${dupOf.line}`}</span>
-            <select className="input py-1 text-xs" value={row.choice} onChange={(e) => onChoice(e.target.value as DupChoice)} aria-label="Duplicate handling">
-              <option value="skip">Skip</option>
-              {dupOf.note && <option value="update">Update existing</option>}
-              <option value="keep">Keep both</option>
-            </select>
-          </div>
-        )}
+        {status?.kind === 'update' && <span className="text-xs text-sky-700 dark:text-sky-300">Update: adds {status.added.join(', ')}</span>}
+        {status?.kind === 'unchanged' && <span className="muted text-xs">Unchanged (nothing new)</span>}
+        {status?.kind === 'same-as' && <span className="muted text-xs">Same item as line {status.lineNo}</span>}
       </td>
     </tr>
   )
@@ -441,6 +417,11 @@ function QuickAdd() {
                   ? `${prompt.context.before}___${prompt.context.after}`
                   : (prompt.prompt ?? '')}
             </p>
+            {prompt.promptHe && (
+              <p className="he text-sm" dir="rtl" lang="he">
+                {prompt.promptHe}
+              </p>
+            )}
             {prompt.kind === 'choice' && <p className="muted mt-1 text-xs">Options: {prompt.options.join(' / ')}</p>}
             <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">→ {prompt.kind === 'flip' ? prompt.reveal.definition : prompt.reveal.answer}</p>
           </div>

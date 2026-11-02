@@ -1,4 +1,5 @@
-import { compareWords, correctionWords, lcsPairs } from './checker'
+import { compareWords, correctionWords, lcsPairs, normalizeAnswer, tokenize } from './checker'
+import { gapFragment, sentenceDistractors } from './distractors'
 import { clozeBlank, clozeCount, clozePlain, hasCloze } from './cloze'
 import { tenseChoice } from './conjugator'
 import { isLongBreak, levelOf, patternKey } from './levels'
@@ -130,6 +131,37 @@ export const QUIZ_FORMAT: Partial<Record<ExerciseId, 'choice' | 'cloze' | 'produ
   'sentence-translate': 'production',
   'sentence-produce': 'production',
   'cloze-produce': 'production',
+}
+
+// ---------------- options of one kind ----------------
+
+/** The question stem of a sentence choice: the item's situation (with its Hebrew under it), or the Hebrew. */
+function stem(f: { prompt?: string; he?: string }): { prompt?: string; promptIsHebrew?: boolean; promptHe?: string } {
+  if (f.prompt) return { prompt: f.prompt, ...opt('promptHe', f.he) }
+  if (f.he) return { prompt: f.he, promptIsHebrew: true }
+  return {}
+}
+
+/** `dist:` entries usable next to a word or phrase: whole sentences are left out. */
+function wordDistractors(term: string, dist: readonly string[] | undefined): string[] {
+  const size = tokenize(term).length
+  return (dist ?? []).filter((d) => {
+    const n = tokenize(d).length
+    return n > 0 && n <= size + 3 && !(n >= 3 && /[.!?]$/.test(d.trim()))
+  })
+}
+
+/** The options of a gap-fill: the answer, then each `dist:` entry as the part in the gap (cut down if it's a sentence). */
+function clozeChoices(n: Extract<Note, { type: 'cloze' }>): string[] {
+  const b = clozeBlank(n.fields.text, 1)
+  if (!b) return []
+  const answer = b.answers[0]!
+  const out = [answer]
+  for (const d of n.fields.distractors ?? []) {
+    const part = tokenize(d).length > tokenize(answer).length + 3 ? gapFragment(d, b.before, b.after) : d
+    if (part && !b.answers.some((a) => normalizeAnswer(a) === normalizeAnswer(part)) && !out.some((o) => normalizeAnswer(o) === normalizeAnswer(part))) out.push(part)
+  }
+  return out
 }
 
 // ---------------- other items: distractors, related mistakes ----------------
@@ -281,7 +313,7 @@ function available(id: ExerciseId, c: Ctx): boolean {
   const n = c.note
   switch (id) {
     case 'vocab-choose':
-      return n.type === 'vocab' && ((n.fields.distractors?.length ?? 0) > 0 || others(c, 'vocab').length > 0)
+      return n.type === 'vocab' && (wordDistractors(n.fields.term, n.fields.distractors).length > 0 || others(c, 'vocab').length > 0)
     case 'vocab-from-he':
     case 'cloze-produce':
       return !!n.fields.he
@@ -313,7 +345,7 @@ function available(id: ExerciseId, c: Ctx): boolean {
     case 'sentence-produce':
       return !!n.fields.prompt
     case 'cloze-choose':
-      return (n.fields.distractors?.length ?? 0) > 0
+      return n.type === 'cloze' && clozeChoices(n).length > 1
     default:
       return true
   }
@@ -408,7 +440,7 @@ function buildVocab(id: ExerciseId, c: Ctx, n: Extract<Note, { type: 'vocab' }>)
       const pool = shuffle(others(c, 'vocab'), c.rand)
       const samePos = pool.filter((o) => o.type === 'vocab' && f.pos && o.fields.pos === f.pos)
       const guessed = [...samePos, ...pool].map((o) => (o.type === 'vocab' ? o.fields.term : ''))
-      const wrong = uniq([...(f.distractors ?? []), ...guessed]).filter((t) => t && t.toLowerCase() !== f.term.toLowerCase()).slice(0, 3)
+      const wrong = uniq([...wordDistractors(f.term, f.distractors), ...guessed]).filter((t) => t && t.toLowerCase() !== f.term.toLowerCase()).slice(0, 3)
       return { kind: 'choice', instruction: 'Which word means this?', ...meaning, ...choice([f.term, ...wrong], f.term, c.rand), reveal, speak: f.term }
     }
     case 'vocab-produce':
@@ -473,7 +505,14 @@ function buildFix(id: ExerciseId, c: Ctx, n: Extract<Note, { type: 'fix' }>): Bu
   const reveal: Reveal = { answer: right, original: f.wrong, ...opt('rule', f.rule), ...opt('he', f.he) }
   switch (id) {
     case 'fix-choose':
-      return { kind: 'choice', instruction: 'Which one is correct?', ...choice([right, f.wrong, ...(f.distractors ?? []).slice(0, 2)], right, c.rand), reveal, speak: right }
+      return {
+        kind: 'choice',
+        instruction: f.prompt || f.he ? 'Which is the correct way to say it?' : 'Which one is correct?',
+        ...stem(f),
+        ...choice([right, f.wrong, ...sentenceDistractors(n).slice(0, 2)], right, c.rand),
+        reveal,
+        speak: right,
+      }
     case 'fix-spot': {
       const s = spotOptions(f.wrong, errorSpan(f.wrong, right)!, c.rand)
       return { kind: 'choice', instruction: 'Which part is wrong?', prompt: f.wrong, ...choice(s.options, s.answer, c.rand), reveal, speak: right }
@@ -612,7 +651,14 @@ function buildNatural(id: ExerciseId, c: Ctx, n: Extract<Note, { type: 'natural'
   const reveal: Reveal = { answer: natural, full: natural, original: f.mine, ...opt('notes', f.note), ...opt('rule', f.rule), ...opt('he', f.he) }
   switch (id) {
     case 'natural-choose':
-      return { kind: 'choice', instruction: 'Which sounds more natural?', ...choice([natural, f.mine, ...(f.distractors ?? []).slice(0, 2)], natural, c.rand), reveal, speak: natural }
+      return {
+        kind: 'choice',
+        instruction: f.prompt || f.he ? 'Which is the most natural way to say it?' : 'Which sounds more natural?',
+        ...stem(f),
+        ...choice([natural, f.mine, ...sentenceDistractors(n).slice(0, 2)], natural, c.rand),
+        reveal,
+        speak: natural,
+      }
     case 'natural-key':
       return {
         kind: 'typed',
@@ -703,7 +749,7 @@ function buildCloze(id: ExerciseId, c: Ctx, n: Extract<Note, { type: 'cloze' }>)
   const context = { before: b?.before ?? '', after: b?.after ?? '' }
   switch (id) {
     case 'cloze-choose':
-      return { kind: 'choice', instruction: 'Choose what fits', context, ...opt('hint', b?.hint), ...choice([answers[0]!, ...(f.distractors ?? []).slice(0, 3)], answers[0]!, c.rand), reveal, speak: full }
+      return { kind: 'choice', instruction: 'Choose what fits', context, ...opt('hint', b?.hint), ...choice(clozeChoices(n).slice(0, 4), answers[0]!, c.rand), reveal, speak: full }
     case 'cloze-produce':
       return { kind: 'typed', instruction: 'Say it in English, then type it', prompt: f.he!, promptIsHebrew: true, accepted: [full], check: { mode: 'meaning', protect: answers.slice(0, 1) }, multiline: true, reveal, speak: full }
     default:

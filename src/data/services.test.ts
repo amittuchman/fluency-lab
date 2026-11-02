@@ -256,3 +256,78 @@ describe('backup', () => {
     expect(validateBackup({ app: 'fluency-lab', schemaVersion: 99, tables: {} }, SCHEMA_VERSION).ok).toBe(false)
   })
 })
+
+describe('repair of fragment wrong options (once per device)', () => {
+  const fix = {
+    type: 'fix' as const,
+    fields: { wrong: 'I study PPE for two and a half years.', right: 'I have studied PPE for two and a half years.', rule: 'r', distractors: ['have study', 'have studying'] },
+  }
+  /** Data saved before the repair existed: this device hasn't run it yet. */
+  async function beforeRepair() {
+    const note = await createNote(repos, fix, [], null, NOW)
+    const [card] = await repos.cards.byNote(note.id)
+    await reviewCard(repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
+    await db.meta.delete(META.distractorRepair)
+    return note
+  }
+
+  it('rewrites the options as sentences after a backup; cards and history untouched', async () => {
+    const note = await beforeRepair()
+    const cardsBefore = await repos.cards.byNote(note.id)
+    const logsBefore = await repos.logs.all()
+    await initialize(repos, NOW + 1)
+    expect((await repos.notes.get(note.id))!.fields).toMatchObject({
+      distractors: ['I have study PPE for two and a half years.', 'I have studying PPE for two and a half years.'],
+    })
+    const backup = await repos.meta.get<BackupFile>(META.backupBeforeDistractorRepair)
+    expect(backup!.tables.notes.find((n) => n.id === note.id)!.fields).toMatchObject({ distractors: ['have study', 'have studying'] })
+    expect(await repos.cards.byNote(note.id)).toEqual(cardsBefore)
+    expect(await repos.logs.all()).toEqual(logsBefore)
+  })
+
+  it('runs once: a second start changes nothing, and a fresh install takes no backup', async () => {
+    expect(await repos.meta.get(META.backupBeforeDistractorRepair)).toBeUndefined()
+    const note = await beforeRepair()
+    await initialize(repos, NOW + 1)
+    const after = await db.notes.get(note.id)
+    await initialize(repos, NOW + 2)
+    expect(await db.notes.get(note.id)).toEqual(after)
+  })
+
+  it('also repairs items in the Trash', async () => {
+    const note = await beforeRepair()
+    await trashNotes(repos, [note.id], NOW)
+    await db.meta.delete(META.distractorRepair)
+    await initialize(repos, NOW + 1)
+    expect((await repos.notes.trashed())[0]!.fields).toMatchObject({ distractors: ['I have study PPE for two and a half years.', 'I have studying PPE for two and a half years.'] })
+  })
+})
+
+describe('re-import upgrades existing items', () => {
+  const old = { type: 'fix' as const, fields: { wrong: 'It depends of the price.', right: 'It depends on the price.', rule: 'Depend takes on.' } }
+  const lineFor = (extra: Record<string, unknown>) => ({ type: 'fix' as const, fields: { ...old.fields, ...extra } }) as typeof old
+
+  it('fills only the missing fields; keeps id, package, level, FSRS and history; never duplicates', async () => {
+    const note = await createNote(repos, old, ['prepositions'], 'pkg-1', NOW)
+    const [card] = await repos.cards.byNote(note.id)
+    await reviewCard(repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
+    await repos.cards.put({ ...(await repos.cards.get(card!.id))!, level: 3 })
+    const cardBefore = await repos.cards.get(card!.id)
+    const logsBefore = await repos.logs.all()
+
+    const imported = lineFor({ rule: 'A different rule.', he: 'זה תלוי במחיר.', prompt: 'Someone asks about the deal', also: ['We depend of you. => We depend on you.'] })
+    const s = await importPackage(repos, { name: 'P2', sourceText: '', items: [{ content: imported, tags: ['pattern:depend-on', 'prepositions'], action: 'update', targetNoteId: note.id }] }, NOW + 5)
+
+    expect(s).toMatchObject({ created: 0, updated: 1, unchanged: 0, packageId: null })
+    const after = (await repos.notes.get(note.id))!
+    expect(after).toMatchObject({ id: note.id, packageId: 'pkg-1', tags: ['prepositions', 'pattern:depend-on'] })
+    expect(after.fields).toEqual({ ...old.fields, he: 'זה תלוי במחיר.', prompt: 'Someone asks about the deal', also: ['We depend of you. => We depend on you.'] }) // rule kept
+    expect(await repos.cards.byNote(note.id)).toEqual([cardBefore])
+    expect(await repos.logs.all()).toEqual(logsBefore)
+    expect(await repos.notes.count()).toBe(1)
+    expect(await repos.packages.all()).toEqual([]) // nothing new: no empty package
+
+    const again = await importPackage(repos, { name: 'P3', sourceText: '', items: [{ content: imported, tags: [], action: 'update', targetNoteId: note.id }] }, NOW + 6)
+    expect(again).toMatchObject({ updated: 0, unchanged: 1 })
+  })
+})

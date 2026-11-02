@@ -319,6 +319,11 @@ function QuizDone({ result, prompts, onAgain }: { result: QuizResult; prompts: M
                 <li key={m.cardId} className="card space-y-1 text-sm">
                   <p className="muted text-xs">{p?.instruction}</p>
                   {p?.prompt && <p dir="auto">{p.prompt}</p>}
+                  {p?.promptHe && (
+                    <p className="he" dir="rtl" lang="he">
+                      {p.promptHe}
+                    </p>
+                  )}
                   {p?.context && (
                     <p>
                       {p.context.before}
