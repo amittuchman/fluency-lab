@@ -107,3 +107,73 @@ export function listen(handlers: { onResult: (alternatives: string[]) => void; o
   r.start()
   return { stop: () => r.stop() }
 }
+
+/**
+ * Dictation into an answer field: runs until stopped, reporting text as it is heard (`onInterim`, replaced
+ * as recognition goes on) and each newly final piece (`onFinal`, to append). Android Chrome repeats earlier
+ * text in continuous mode, so there it listens one phrase at a time and restarts until stopped.
+ */
+export function dictate(handlers: {
+  onInterim: (text: string) => void
+  onFinal: (text: string) => void
+  onError: (message: string) => void
+  onEnd: () => void
+}): Listening | null {
+  const Ctor = recognizerCtor()
+  if (!Ctor) return null
+  const continuous = !/Android/i.test(navigator.userAgent)
+  let stopped = false
+  let current: Recognizer | null = null
+
+  const start = () => {
+    const r = new Ctor()
+    current = r
+    r.lang = 'en-US'
+    r.interimResults = true
+    r.maxAlternatives = 1
+    r.continuous = continuous
+    // Final text already passed on in this session: later events may repeat it.
+    let applied = ''
+    r.onresult = (e) => {
+      let final = ''
+      let interim = ''
+      for (let i = 0; i < e.results.length; i++) {
+        const res = e.results[i]!
+        if (res.isFinal) final += res[0]!.transcript
+        else interim += res[0]!.transcript
+      }
+      if (final !== applied) {
+        const added = final.startsWith(applied) ? final.slice(applied.length) : final
+        applied = final
+        if (added.trim()) handlers.onFinal(added.trim())
+      }
+      handlers.onInterim(interim.trim())
+    }
+    r.onerror = (e) => {
+      if (e.error === 'aborted' || (e.error === 'no-speech' && !continuous)) return
+      stopped = true
+      handlers.onError(ERRORS[e.error] ?? `Speech recognition error: ${e.error}`)
+    }
+    r.onend = () => {
+      handlers.onInterim('')
+      if (!stopped && !continuous) start()
+      else handlers.onEnd()
+    }
+    r.start()
+  }
+  start()
+  return {
+    stop: () => {
+      stopped = true
+      current?.stop()
+    },
+  }
+}
+
+/** Add dictated text after what's already in the field, with one space between. */
+export function appendTranscript(current: string, heard: string): string {
+  const add = heard.trim()
+  if (!add) return current
+  if (!current.trim()) return add
+  return /\s$/.test(current) ? current + add : `${current} ${add}`
+}

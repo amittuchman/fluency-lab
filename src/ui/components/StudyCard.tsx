@@ -8,6 +8,7 @@ import type { Grade, TenseName } from '../../domain/types'
 import { isTypingTarget, useCheatSheets, useSettings } from '../hooks'
 import { speak, ttsSupported, useVoices } from '../speech'
 import { SpeakControl } from './SpeakControl'
+import { VoiceInput } from './VoiceInput'
 import { Diff } from './Diff'
 import { Button, Kbd } from './ui'
 
@@ -328,11 +329,14 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
             />
           )}
           {!revealed && (
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <span className="muted text-xs">
-                <Kbd>Enter</Kbd> check{prompt.multiline ? ' · Shift+Enter new line' : ''}
-              </span>
-              <Button variant="primary" type="submit">
+            <div className="mt-3 flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1.5">
+                <VoiceInput value={text} onChange={setText} />
+                <span className="muted block text-xs">
+                  <Kbd>Enter</Kbd> check{prompt.multiline ? ' · Shift+Enter new line' : ''}
+                </span>
+              </div>
+              <Button variant="primary" type="submit" className="ml-auto">
                 Check
               </Button>
             </div>
@@ -364,8 +368,9 @@ export function StudyCard({ prompt, intervals, onDone, signals }: Props) {
             }}
           />
           {!revealed && (
-            <div className="mt-3 flex justify-end">
-              <Button variant="primary" type="submit">
+            <div className="mt-3 flex flex-wrap items-start justify-between gap-2">
+              <VoiceInput value={text} onChange={setText} />
+              <Button variant="primary" type="submit" className="ml-auto">
                 Check
               </Button>
             </div>
