@@ -68,6 +68,7 @@ function ImportPane() {
   const [done, setDone] = useState<(ImportSummary & { name: string }) | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const dupIndex = useRepoQuery(() => duplicateIndex(repos), [])
+  const packageIds = useRepoQuery(async () => new Set((await repos.packages.all()).map((p) => p.id)), [])
 
   const parsed = useMemo(() => parseImport(deferred), [deferred])
 
@@ -77,14 +78,15 @@ function ImportPane() {
   )
   // Existing items (same type and main text) are upgraded, never duplicated.
   const plan = useMemo(
-    () => planImport(items.flatMap((i) => (i.content ? [{ lineNo: i.lineNo, content: i.content, tags: i.tags }] : [])), dupIndex ?? new Map()),
-    [items, dupIndex],
+    () => planImport(items.flatMap((i) => (i.content ? [{ lineNo: i.lineNo, content: i.content, tags: i.tags }] : [])), dupIndex ?? new Map(), packageIds ?? new Set()),
+    [items, dupIndex, packageIds],
   )
   const rows: Row[] = items.map((item) => ({ item, status: plan.status.get(item.lineNo) ?? null, cards: item.content ? templatesFor(item.content).length : 0 }))
   const counts = {
     create: plan.create.length,
     update: plan.update.length,
     unchanged: plan.unchanged,
+    toPackage: plan.toPackage.length,
     errors: rows.filter((r) => !r.item.content).length,
     warnings: rows.filter((r) => r.item.status === 'warn').length,
   }
@@ -92,15 +94,26 @@ function ImportPane() {
   const problems = (r: Row) => r.item.status !== 'ok' || (r.status !== null && r.status.kind !== 'new')
   const shown = (onlyProblems ? rows.filter(problems) : rows).slice(0, onlyProblems ? undefined : 300)
 
+  const updating = new Set(plan.update.map((u) => u.note.id))
+  const regroupOnly = plan.toPackage.filter((n) => !updating.has(n.id))
+
   const save = async () => {
     setSaving(true)
     const importItems: ImportItem[] = [
       ...plan.create.map((c) => ({ content: c.content, tags: c.tags, action: 'create' as const })),
-      ...plan.update.map((u) => ({ content: { type: u.note.type, fields: u.note.fields } as NoteContent, tags: u.note.tags, action: 'update' as const, targetNoteId: u.note.id })),
+      ...plan.update.map((u) => ({
+        content: { type: u.note.type, fields: u.note.fields } as NoteContent,
+        tags: u.note.tags,
+        action: 'update' as const,
+        targetNoteId: u.note.id,
+        addToPackage: u.toPackage,
+      })),
+      // Unchanged items without a package: only their package changes.
+      ...regroupOnly.map((n) => ({ content: { type: n.type, fields: n.fields } as NoteContent, tags: n.tags, action: 'update' as const, targetNoteId: n.id, addToPackage: true })),
     ]
     const summary = await importPackage(repos, { name: pkgName, sourceText: text, items: importItems })
-    // Items with nothing new aren't sent to the import at all; count them here.
-    setDone({ ...summary, unchanged: summary.unchanged + plan.unchanged, name: pkgName })
+    // Other items with nothing new aren't sent to the import at all; count them here.
+    setDone({ ...summary, unchanged: summary.unchanged + plan.unchanged - regroupOnly.length, name: pkgName })
     setSaving(false)
   }
 
@@ -109,7 +122,14 @@ function ImportPane() {
       <div className="card space-y-3">
         <p className="text-lg font-medium">Saved “{done.name}”</p>
         <p className="text-sm">
-          {done.created} new, {done.updated} updated, {done.unchanged} unchanged.
+          {done.created} new, {done.updated} updated, {done.unchanged} unchanged
+          {done.addedToPackage > 0 && (
+            <>
+              {' '}
+              · {done.addedToPackage} added to package “{done.name}”
+            </>
+          )}
+          .
         </p>
         <div className="flex flex-wrap gap-2">
           {done.packageId && (
@@ -211,11 +231,17 @@ function ImportPane() {
             <p className="text-sm">
               <strong>{counts.update}</strong> {counts.update === 1 ? 'item' : 'items'} will be updated, <strong>{counts.create}</strong> new,{' '}
               <strong>{counts.unchanged}</strong> unchanged
+              {counts.toPackage > 0 && (
+                <>
+                  {' '}
+                  · <strong>{counts.toPackage}</strong> {counts.toPackage === 1 ? 'item' : 'items'} will be added to package “{pkgName}”
+                </>
+              )}
               {counts.errors > 0 && <span className="text-rose-700 dark:text-rose-300">, {counts.errors} lines with errors (not saved)</span>}
               {counts.warnings > 0 && <span className="text-amber-700 dark:text-amber-300">, {counts.warnings} with warnings</span>}.
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="primary" onClick={() => void save()} disabled={saving || !dupIndex || counts.create + counts.update === 0}>
+              <Button variant="primary" onClick={() => void save()} disabled={saving || !dupIndex || !packageIds || counts.create + counts.update + counts.toPackage === 0}>
                 {saving ? 'Saving…' : 'Confirm'}
               </Button>
               <label className="flex items-center gap-2 text-sm">
@@ -324,6 +350,9 @@ function ImportRow({
       <td className="px-2 py-2">
         {status?.kind === 'update' && <span className="text-xs text-sky-700 dark:text-sky-300">Update: adds {status.added.join(', ')}</span>}
         {status?.kind === 'unchanged' && <span className="muted text-xs">Unchanged (nothing new)</span>}
+        {(status?.kind === 'update' || status?.kind === 'unchanged') && status.toPackage && (
+          <span className="block text-xs text-sky-700 dark:text-sky-300">Has no package: joins this one</span>
+        )}
         {status?.kind === 'same-as' && <span className="muted text-xs">Same item as line {status.lineNo}</span>}
       </td>
     </tr>

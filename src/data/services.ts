@@ -15,7 +15,7 @@ import {
   type ReviewLog,
   type ReviewMode,
 } from '../domain/types'
-import { groupBy, newId, uniq } from '../domain/util'
+import { groupBy, hashString, newId, uniq } from '../domain/util'
 import { exportBackup } from './backup'
 import { SCHEMA_VERSION } from './dexie'
 import { META, type Repos } from './repos'
@@ -117,6 +117,8 @@ export interface ImportItem {
    */
   action: 'create' | 'update' | 'skip'
   targetNoteId?: string
+  /** For an existing item without a package: put it in this import's package. */
+  addToPackage?: boolean
 }
 
 export interface ImportSummary {
@@ -126,22 +128,69 @@ export interface ImportSummary {
   skipped: number
   /** Existing items the import had nothing new for. */
   unchanged: number
+  /** Existing items without a package that were put in this import's package. */
+  addedToPackage: number
   cards: number
 }
 
 /**
- * Save confirmed import items as one Package. Updated notes move into the new package,
- * since that is the material about to be studied.
+ * Package ids are derived from what the package is, so two devices that create the same package (the same
+ * import, or the same repair) create one record that sync merges, not two.
+ */
+export function packageIdFor(name: string, key: string): string {
+  const s = `${name}\n${key}`
+  return `pkg-${hashString(s)}${hashString(`#${s}`)}`
+}
+
+/** Notes that no package groups: never given one, or their package was deleted. */
+export function notesWithoutPackage<T extends Note>(notes: readonly T[], packages: readonly Package[]): T[] {
+  const ids = new Set(packages.map((p) => p.id))
+  return notes.filter((n) => n.packageId === null || !ids.has(n.packageId))
+}
+
+/** Before notes are first regrouped into packages on this device, keep a full copy of the data here. */
+async function backupBeforePackageRepair(repos: Repos, now: number): Promise<void> {
+  if (!(await repos.meta.get(META.backupBeforePackageRepair))) await repos.meta.set(META.backupBeforePackageRepair, await exportBackup(repos, now))
+}
+
+/**
+ * Put notes without a package into a package: an existing one, or a new one with this name. Only the
+ * notes' package changes; their cards (level, FSRS) and history are untouched.
+ */
+export async function assignToPackage(
+  repos: Repos,
+  noteIds: string[],
+  target: { packageId: string } | { name: string },
+  now = Date.now(),
+): Promise<string> {
+  await backupBeforePackageRepair(repos, now)
+  return repos.transaction(async () => {
+    let packageId: string
+    if ('packageId' in target) packageId = target.packageId
+    else {
+      packageId = packageIdFor(target.name, [...noteIds].sort().join(','))
+      if (!(await repos.packages.get(packageId))) await repos.packages.put({ id: packageId, name: target.name, createdAt: now, sourceText: '' })
+    }
+    await moveToPackage(repos, noteIds, packageId, now)
+    return packageId
+  })
+}
+
+/**
+ * Save confirmed import items as one Package. Existing items keep their package; those without one
+ * (`addToPackage`) join this one.
  */
 export async function importPackage(
   repos: Repos,
   input: { name: string; sourceText: string; items: ImportItem[] },
   now = Date.now(),
 ): Promise<ImportSummary> {
-  const pkg: Package = { id: newId(), name: input.name, createdAt: now, sourceText: input.sourceText }
-  const summary: ImportSummary = { packageId: null, created: 0, updated: 0, skipped: 0, unchanged: 0, cards: 0 }
+  const pkg: Package = { id: packageIdFor(input.name, input.sourceText), name: input.name, createdAt: now, sourceText: input.sourceText }
+  const summary: ImportSummary = { packageId: null, created: 0, updated: 0, skipped: 0, unchanged: 0, addedToPackage: 0, cards: 0 }
+  if (input.items.some((i) => i.addToPackage)) await backupBeforePackageRepair(repos, now)
   await repos.transaction(async () => {
     const created: Note[] = []
+    const packageIds = new Set((await repos.packages.all()).map((p) => p.id))
     for (const item of input.items) {
       if (item.action === 'skip') {
         summary.skipped++
@@ -152,19 +201,21 @@ export async function importPackage(
         if (cur) {
           // Upgrade in place: same id, package and cards (level, FSRS, history untouched).
           const filled = fillMissing(cur, item.content, item.tags)
-          if (filled) {
-            await repos.notes.put({ ...filled.note, updatedAt: now })
-            summary.updated++
-          } else summary.unchanged++
+          // An item no package groups (its package was deleted) joins this one; one in a package stays there.
+          const adopt = !!item.addToPackage && (cur.packageId === null || !packageIds.has(cur.packageId))
+          if (filled || adopt) await repos.notes.put({ ...(filled?.note ?? cur), ...(adopt ? { packageId: pkg.id } : {}), updatedAt: now })
+          if (filled) summary.updated++
+          else summary.unchanged++
+          if (adopt) summary.addedToPackage++
           continue
         }
       }
       // Stagger createdAt by 1 ms so new cards keep the package's order.
       created.push(makeNote(item.content, item.tags, pkg.id, now + created.length))
     }
-    // A package holds the new items; an import that only upgrades existing ones creates none.
-    if (created.length) {
-      await repos.packages.put(pkg)
+    // A package holds the new items and the regrouped ones; an import that only upgrades items creates none.
+    if (created.length || summary.addedToPackage) {
+      if (!packageIds.has(pkg.id)) await repos.packages.put(pkg)
       summary.packageId = pkg.id
     }
     await repos.notes.bulkPut(created)
