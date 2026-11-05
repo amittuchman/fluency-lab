@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { repos } from '../../data'
-import { moveToPackage, readinessFor, trashNotes } from '../../data/services'
-import type { Package } from '../../domain/types'
-import { Button, Confirm, Empty, Modal, PageHeader } from '../components/ui'
+import { assignToPackage, moveToPackage, notesWithoutPackage, readinessFor, trashNotes } from '../../data/services'
+import { primaryText } from '../../domain/parser'
+import type { Note, Package } from '../../domain/types'
+import { Button, Empty, Modal, PageHeader } from '../components/ui'
 import { formatDate } from '../format'
 import { useRepoQuery } from '../hooks'
 
@@ -12,17 +13,19 @@ export function Packages() {
   const [deleting, setDeleting] = useState<{ pkg: Package; noteIds: string[] } | null>(null)
   const [renaming, setRenaming] = useState<Package | null>(null)
 
-  const list = useRepoQuery(async () => {
+  const data = useRepoQuery(async () => {
     const [packages, notes] = await Promise.all([repos.packages.all(), repos.notes.all()])
-    return Promise.all(
+    const rows = await Promise.all(
       packages.map(async (pkg) => {
         const own = notes.filter((n) => n.packageId === pkg.id)
         return { pkg, noteIds: own.map((n) => n.id), readiness: await readinessFor(repos, own) }
       }),
     )
+    return { rows, packages, orphans: notesWithoutPackage(notes, packages) }
   }, [])
 
-  if (!list) return <p className="muted">Loading…</p>
+  if (!data) return <p className="muted">Loading…</p>
+  const list = data.rows
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -31,7 +34,8 @@ export function Packages() {
           Import a package
         </Link>
       </PageHeader>
-      {list.length === 0 && <Empty title="No packages yet.">Every import creates a package.</Empty>}
+      {list.length === 0 && data.orphans.length === 0 && <Empty title="No packages yet.">Every import creates a package.</Empty>}
+      {data.orphans.length > 0 && <WithoutPackage notes={data.orphans} packages={data.packages} />}
       <div className="space-y-3">
         {list.map(({ pkg, noteIds, readiness }) => (
           <div key={pkg.id} className="card">
@@ -119,29 +123,117 @@ function RenameModal({ pkg, onClose }: { pkg: Package; onClose: () => void }) {
 }
 
 function DeletePackage({ pkg, noteIds, onClose }: { pkg: Package; noteIds: string[]; onClose: () => void }) {
-  const [withNotes, setWithNotes] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const run = async (withNotes: boolean) => {
+    setBusy(true)
+    if (withNotes) await trashNotes(repos, noteIds)
+    else await moveToPackage(repos, noteIds, null)
+    await repos.packages.delete(pkg.id)
+    onClose()
+  }
   return (
-    <Confirm
-      title={`Delete “${pkg.name}”?`}
-      danger
-      confirmLabel="Delete package"
-      onCancel={onClose}
-      onConfirm={async () => {
-        if (withNotes) await trashNotes(repos, noteIds)
-        else await moveToPackage(repos, noteIds, null)
-        await repos.packages.delete(pkg.id)
-        onClose()
-      }}
-      body={
-        <div className="space-y-2">
-          <p>The package record and its source text are removed.</p>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={withNotes} onChange={(e) => setWithNotes(e.target.checked)} />
-            Also move its {noteIds.length} notes to Trash (restorable for 30 days)
-          </label>
-          {!withNotes && <p className="muted">The notes stay in your library without a package.</p>}
+    <Modal title={`Delete “${pkg.name}”?`} onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <p>
+          It has {noteIds.length} {noteIds.length === 1 ? 'note' : 'notes'}. Progress and history are kept either way.
+        </p>
+        <div className="flex flex-col gap-2">
+          <Button disabled={busy} onClick={() => void run(false)}>
+            Delete the package only (keep its notes)
+          </Button>
+          <Button variant="danger" disabled={busy} onClick={() => void run(true)}>
+            Delete the package and move its notes to Trash
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
         </div>
-      }
-    />
+        <p className="muted text-xs">
+          Kept notes appear under “Items without a package”, where you can put them in a package again. Trash can be
+          restored for 30 days.
+        </p>
+      </div>
+    </Modal>
+  )
+}
+
+/** Notes added within a minute of each other came from one import (or one session of Quick add). */
+function batches(notes: readonly Note[]): Note[][] {
+  const sorted = [...notes].sort((a, b) => a.createdAt - b.createdAt)
+  const out: Note[][] = []
+  for (const n of sorted) {
+    const last = out.at(-1)
+    if (last && n.createdAt - last.at(-1)!.createdAt <= 60_000) last.push(n)
+    else out.push([n])
+  }
+  return out
+}
+
+function WithoutPackage({ notes, packages }: { notes: Note[]; packages: Package[] }) {
+  return (
+    <section className="card mb-3 space-y-3">
+      <div>
+        <h2 className="font-medium">Items without a package ({notes.length})</h2>
+        <p className="muted text-sm">
+          No package groups these (none was set, or theirs was deleted). Grouped by when they were added. Putting them in a
+          package keeps their progress and history.
+        </p>
+      </div>
+      {batches(notes).map((batch) => (
+        <AssignBatch key={batch[0]!.id} notes={batch} packages={packages} />
+      ))}
+    </section>
+  )
+}
+
+function AssignBatch({ notes, packages }: { notes: Note[]; packages: Package[] }) {
+  const [target, setTarget] = useState('new')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const ready = target !== 'new' || name.trim() !== ''
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+      <p className="text-sm font-medium">
+        Added {formatDate(notes[0]!.createdAt)} · {notes.length} {notes.length === 1 ? 'item' : 'items'}
+      </p>
+      <p className="muted mb-2 truncate text-xs" dir="auto">
+        {notes
+          .slice(0, 3)
+          .map((n) => primaryText(n))
+          .join(' · ')}
+        {notes.length > 3 ? ' …' : ''}
+      </p>
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault()
+          if (!ready) return
+          setBusy(true)
+          const ids = notes.map((n) => n.id)
+          await assignToPackage(repos, ids, target === 'new' ? { name: name.trim() } : { packageId: target })
+        }}
+      >
+        <select className="input w-auto py-1.5 text-sm" value={target} onChange={(e) => setTarget(e.target.value)} aria-label="Put them in">
+          <option value="new">New package…</option>
+          {packages.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        {target === 'new' && (
+          <input
+            className="input w-auto min-w-0 flex-1 py-1.5 text-sm"
+            placeholder="Package name, e.g. 2026-11-05 – Past Simple"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-label="New package name"
+          />
+        )}
+        <Button size="sm" variant="primary" type="submit" disabled={!ready || busy}>
+          Put in package
+        </Button>
+      </form>
+    </div>
   )
 }

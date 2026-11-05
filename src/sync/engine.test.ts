@@ -2,7 +2,7 @@
 import type { PGlite } from '@electric-sql/pglite'
 import { createDexieRepos, FluencyDB } from '../data/dexie'
 import { META, type Repos } from '../data/repos'
-import { createNote, importPackage, initialize, makeNote, purgeNotes, reviewCard, trashNotes, undoLastReview, updateNote } from '../data/services'
+import { assignToPackage, createNote, importPackage, initialize, makeNote, moveToPackage, purgeNotes, reviewCard, trashNotes, undoLastReview, updateNote } from '../data/services'
 import { parseImport } from '../domain/parser'
 import { emptyFsrs } from '../domain/scheduler'
 import { isActiveCard, newCard } from '../domain/templates'
@@ -354,6 +354,68 @@ describe('sync between two devices', () => {
       await b.engine.sync()
       await a.engine.sync()
       for (const d of [a, b]) expect((await d.repos.notes.get(note.id))!.fields).toMatchObject({ he: 'אני לומד PPE כבר שנתיים וחצי.', distractors: repairedDist })
+    })
+  })
+
+  describe('items without a package, on two devices', () => {
+    const NAME = '2026-11-05 – Past Simple'
+    const TEXT = '# Package: 2026-11-05 – Past Simple\n…'
+    const contents = [0, 1, 2].map((i) => ({ type: 'tense', fields: { sentence: `We {{met::meet}} person ${i} yesterday.`, tense: 'past-simple' } }) as NoteContent)
+
+    /** A block imported on A, synced, then its package deleted on A ("keep notes") and synced to B. */
+    async function deletedPackage() {
+      const a = await device()
+      const b = await device()
+      const first = await importPackage(a.repos, { name: NAME, sourceText: TEXT, items: contents.map((content) => ({ content, tags: [], action: 'create' as const })) })
+      const notes = await a.repos.notes.all()
+      const [card] = await a.repos.cards.byNote(notes[0]!.id)
+      await reviewCard(a.repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null })
+      await a.engine.sync()
+      await b.engine.sync()
+      await moveToPackage(a.repos, notes.map((n) => n.id), null)
+      await a.repos.packages.delete(first.packageId!)
+      await a.engine.sync()
+      await b.engine.sync()
+      return { a, b, notes, cards: await a.repos.cards.all() }
+    }
+    const reimport = (d: Device, notes: Note[]) =>
+      importPackage(d.repos, {
+        name: NAME,
+        sourceText: TEXT,
+        items: notes.map((n) => ({ content: { type: n.type, fields: n.fields } as NoteContent, tags: n.tags, action: 'update' as const, targetNoteId: n.id, addToPackage: true })),
+      })
+    async function expectRegrouped(devices: Device[], cards: Card[]) {
+      for (const d of devices) {
+        const pkgs = await d.repos.packages.all()
+        expect(pkgs.map((p) => p.name)).toEqual([NAME])
+        expect((await d.repos.notes.all()).map((n) => n.packageId)).toEqual(contents.map(() => pkgs[0]!.id))
+        expect(await d.repos.cards.all()).toEqual(cards)
+      }
+      expect(await cloudCount('packages')).toBe(1)
+    }
+
+    it('re-importing on both devices brings back one package (over the deleted one), with every item in it', async () => {
+      const { a, b, notes, cards } = await deletedPackage()
+      expect((await b.repos.packages.all()).length).toBe(0)
+      await reimport(a, notes)
+      await reimport(b, notes)
+      await a.engine.sync()
+      await b.engine.sync()
+      await a.engine.sync()
+      await expectRegrouped([a, b], cards)
+    })
+
+    it('putting them in a new package by hand on both devices also makes one package', async () => {
+      const { a, b, notes, cards } = await deletedPackage()
+      const ids = notes.map((n) => n.id)
+      await assignToPackage(a.repos, ids, { name: NAME })
+      await assignToPackage(b.repos, ids, { name: NAME })
+      await a.engine.sync()
+      await b.engine.sync()
+      await a.engine.sync()
+      for (const d of [a, b]) expect((await d.repos.packages.all()).map((p) => p.name)).toEqual([NAME])
+      for (const d of [a, b]) expect(await d.repos.cards.all()).toEqual(cards)
+      expect(new Set([...(await a.repos.notes.all()), ...(await b.repos.notes.all())].map((n) => n.packageId)).size).toBe(1)
     })
   })
 

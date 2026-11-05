@@ -94,6 +94,7 @@ export const META = {
   /** Automatic full backup taken on this device just before the v3 exercise migration. */
   backupBeforeV3: 'backup:before-v3',
   backupBeforeDistractorRepair: 'backup:before-distractor-repair',
+  backupBeforePackageRepair: 'backup:before-package-repair',
   /** Set once this device has rewritten fragment wrong options as whole sentences. */
   distractorRepair: 'distractorRepair',
 } as const

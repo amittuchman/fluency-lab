@@ -58,3 +58,22 @@ describe('import plan', () => {
     expect(plan.status.get(2)).toEqual({ kind: 'same-as', lineNo: 1 })
   })
 })
+
+describe('items without a package', () => {
+  it('a matched item with no package, or whose package is gone, joins the imported package', () => {
+    const none = { ...oldTense, packageId: null } as Note
+    const gone = note({ type: 'sentence', fields: { text: 'It depends on you.' } }, [], 'n2')
+    const kept = note({ type: 'sentence', fields: { text: 'Fair enough.' } }, [], 'n3')
+    const plan = planImport(
+      lines(`@tense She usually {{studies::study}} in the library. | tense: present simple
+@sentence It depends on you. | he: זה תלוי בך.
+@sentence Fair enough.`),
+      library(none, { ...gone, packageId: 'deleted' } as Note, { ...kept, packageId: 'live' } as Note),
+      new Set(['live']),
+    )
+    expect(plan.toPackage.map((n) => n.id)).toEqual(['n1', 'n2'])
+    expect(plan.status.get(1)).toMatchObject({ kind: 'unchanged', toPackage: true })
+    expect(plan.status.get(2)).toMatchObject({ kind: 'update', toPackage: true })
+    expect(plan.status.get(3)).toMatchObject({ kind: 'unchanged', toPackage: false })
+  })
+})

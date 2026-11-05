@@ -2,7 +2,7 @@ import sampleText from '../../samples/sample-package.txt?raw'
 import { validateBackup, type BackupFile } from '../domain/backup'
 import { emptyFsrs } from '../domain/scheduler'
 import { isActiveCard, newCard } from '../domain/templates'
-import type { Card } from '../domain/types'
+import type { Card, Note, NoteContent } from '../domain/types'
 import { parseImport } from '../domain/parser'
 import { exportBackup, importBackup } from './backup'
 import { createDexieRepos, FluencyDB, SCHEMA_VERSION } from './dexie'
@@ -12,6 +12,9 @@ import {
   importPackage,
   initialize,
   makeNote,
+  assignToPackage,
+  moveToPackage,
+  notesWithoutPackage,
   markForRelearn,
   readinessFor,
   restoreNotes,
@@ -329,5 +332,68 @@ describe('re-import upgrades existing items', () => {
 
     const again = await importPackage(repos, { name: 'P3', sourceText: '', items: [{ content: imported, tags: [], action: 'update', targetNoteId: note.id }] }, NOW + 6)
     expect(again).toMatchObject({ updated: 0, unchanged: 1 })
+  })
+})
+
+describe('items without a package', () => {
+  const block = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ type: 'tense' as const, fields: { sentence: `We {{met::meet}} person ${i} yesterday.`, tense: 'past-simple' as const } }))
+  const NAME = '2026-11-05 – Past Simple'
+  const TEXT = '# Package: 2026-11-05 – Past Simple\n…'
+
+  /** The reported case: a block imported, then its package deleted with "keep notes". */
+  async function deletedPackage() {
+    const items = block(25).map((content) => ({ content, tags: ['tenses'], action: 'create' as const }))
+    const first = await importPackage(repos, { name: NAME, sourceText: TEXT, items }, NOW)
+    const notes = await repos.notes.all()
+    const [card] = await repos.cards.byNote(notes[0]!.id)
+    await reviewCard(repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null, now: NOW, fuzz: false })
+    await moveToPackage(repos, notes.map((n) => n.id), null, NOW + 1)
+    await repos.packages.delete(first.packageId!)
+    return { notes, cardsBefore: await repos.cards.all(), logsBefore: await repos.logs.all() }
+  }
+  const reimport = (notes: Note[]) =>
+    importPackage(
+      repos,
+      { name: NAME, sourceText: TEXT, items: notes.map((n) => ({ content: { type: n.type, fields: n.fields } as NoteContent, tags: n.tags, action: 'update' as const, targetNoteId: n.id, addToPackage: true })) },
+      NOW + 10,
+    )
+
+  it('re-importing the block puts its items back in a package with that name; progress untouched, backup first', async () => {
+    const { notes, cardsBefore, logsBefore } = await deletedPackage()
+    expect(notesWithoutPackage(await repos.notes.all(), await repos.packages.all())).toHaveLength(25)
+    const s = await reimport(notes)
+    expect(s).toMatchObject({ created: 0, updated: 0, unchanged: 25, addedToPackage: 25 })
+    const pkgs = await repos.packages.all()
+    expect(pkgs.map((p) => p.name)).toEqual([NAME])
+    expect((await repos.notes.all()).every((n) => n.packageId === pkgs[0]!.id)).toBe(true)
+    expect(await repos.cards.all()).toEqual(cardsBefore)
+    expect(await repos.logs.all()).toEqual(logsBefore)
+    expect(await repos.meta.get(META.backupBeforePackageRepair)).toBeDefined()
+  })
+
+  it('an item that is already in a package stays there', async () => {
+    const note = await createNote(repos, block(1)[0]!, [], null, NOW)
+    await repos.packages.put({ id: 'keep', name: 'Mine', createdAt: NOW, sourceText: '' })
+    await moveToPackage(repos, [note.id], 'keep', NOW)
+    const s = await importPackage(repos, { name: 'Other', sourceText: 'x', items: [{ content: block(1)[0]!, tags: [], action: 'update', targetNoteId: note.id, addToPackage: true }] }, NOW + 1)
+    expect(s).toMatchObject({ addedToPackage: 0, packageId: null })
+    expect((await repos.notes.get(note.id))!.packageId).toBe('keep')
+  })
+
+  it('a note whose package record is gone also counts as without a package', async () => {
+    const note = await createNote(repos, block(1)[0]!, [], 'deleted-elsewhere', NOW)
+    expect(notesWithoutPackage([note], await repos.packages.all())).toEqual([note])
+  })
+
+  it('assigning by hand: a new package by name, or an existing one; nothing else changes', async () => {
+    const { notes, cardsBefore } = await deletedPackage()
+    const ids = notes.map((n) => n.id)
+    const id = await assignToPackage(repos, ids.slice(0, 20), { name: NAME }, NOW + 5)
+    expect((await repos.packages.get(id))!.name).toBe(NAME)
+    await assignToPackage(repos, ids.slice(20), { packageId: id }, NOW + 6)
+    expect((await repos.notes.all()).every((n) => n.packageId === id)).toBe(true)
+    expect(await repos.cards.all()).toEqual(cardsBefore)
+    expect(await repos.meta.get(META.backupBeforePackageRepair)).toBeDefined()
   })
 })

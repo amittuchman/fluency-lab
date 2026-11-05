@@ -13,8 +13,10 @@ beforeEach(async () => {
 
 it('re-import preview: counts updated / new / unchanged, and Confirm upgrades in place', async () => {
   const user = userEvent.setup()
-  const old = await createNote(repos, { type: 'tense', fields: { sentence: 'She usually {{studies::study}} in the library.', tense: 'present-simple' } }, ['tense:present-simple'], null)
-  await createNote(repos, { type: 'sentence', fields: { text: 'It depends on you.' } }, [], null)
+  // Both already in a package, so the import only upgrades them.
+  await repos.packages.put({ id: 'p0', name: 'Earlier', createdAt: 0, sourceText: '' })
+  const old = await createNote(repos, { type: 'tense', fields: { sentence: 'She usually {{studies::study}} in the library.', tense: 'present-simple' } }, ['tense:present-simple'], 'p0')
+  await createNote(repos, { type: 'sentence', fields: { text: 'It depends on you.' } }, [], 'p0')
   const [card] = await repos.cards.byNote(old.id)
   await reviewCard(repos, { cardId: card!.id, grade: 3, correct: true, responseMs: 1, mode: 'session', userAnswer: null })
   const cardBefore = await repos.cards.get(card!.id)
