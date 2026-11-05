@@ -1,7 +1,7 @@
-import { pickQuizQuestions, quizFormat, quizTagTrends } from './quiz'
+import { availableQuizItems, pickQuizQuestions, quizFormat, quizTagTrends } from './quiz'
 import { emptyFsrs } from './scheduler'
 import { maturity, streak, trueRetention } from './stats'
-import type { Card, Note, QuizResult, ReviewLog } from './types'
+import type { Card, Note, QuizResult, QuizSource, ReviewLog } from './types'
 import { seededRandom } from './util'
 
 const NOW = new Date(2026, 9, 18, 12).getTime()
@@ -74,6 +74,42 @@ describe('quiz', () => {
     expect(q.map((x) => [x.card.id, x.exercise])).toEqual([['a:item', 'fix-correct']])
     const c = pickQuizQuestions({ ...base, config: { source: { kind: 'tag', tag: 'x' }, length: 10, formats: ['choice'], timerSeconds: null } })
     expect(['fix-choose', 'fix-spot']).toContain(c[0]!.exercise)
+  })
+
+  describe('several packages or tags', () => {
+    const many = [
+      note('p1a', { packageId: 'p1', tags: ['grammar'] }),
+      note('p1b', { packageId: 'p1', tags: ['grammar', 'idioms'] }),
+      note('p2a', { packageId: 'p2', tags: ['idioms'] }),
+      note('p3a', { packageId: 'p3', tags: ['economics'] }),
+      note('none', { packageId: null, tags: [] }),
+      note('gone', { packageId: 'p1', tags: ['grammar'], deletedAt: 1 }),
+    ]
+    const manyCards = many.map((n) => card(`${n.id}:item`, n.id, 'item', { level: 1 }))
+    const pick = (source: QuizSource, length = 50) =>
+      pickQuizQuestions({ notes: many, cards: manyCards, logs: [], now: NOW, dayEndTs: NOW + DAY, rand: seededRandom('m'), config: { source, length, formats: ['choice', 'cloze', 'production'], timerSeconds: null } })
+        .map((q) => q.note.id)
+        .sort()
+
+    it('draws from the union of the selected packages', () => {
+      expect(pick({ kind: 'package', packageIds: ['p1', 'p2'] })).toEqual(['p1a', 'p1b', 'p2a'])
+      expect(pick({ kind: 'package', packageIds: [] })).toEqual([])
+    })
+    it('draws from the union of the selected tags, each item once even if it has several of them', () => {
+      expect(pick({ kind: 'tag', tags: ['grammar', 'idioms'] })).toEqual(['p1a', 'p1b', 'p2a'])
+      expect(pick({ kind: 'tag', tags: ['economics', 'idioms'] })).toEqual(['p1b', 'p2a', 'p3a'])
+    })
+    it('quizzes saved before multi-select (one package or tag) still work', () => {
+      expect(pick({ kind: 'package', packageId: 'p2' })).toEqual(['p2a'])
+      expect(pick({ kind: 'tag', tag: 'economics' })).toEqual(['p3a'])
+    })
+    it('counts the items available for a selection, whatever the quiz length', () => {
+      const count = (source: QuizSource) =>
+        availableQuizItems({ notes: many, cards: manyCards, logs: [], now: NOW, dayEndTs: NOW + DAY, config: { source, length: 1, formats: ['choice'], timerSeconds: null } })
+      expect(count({ kind: 'tag', tags: ['grammar', 'idioms'] })).toBe(3)
+      expect(count({ kind: 'package', packageIds: ['p3'] })).toBe(1)
+      expect(count({ kind: 'package', packageIds: [] })).toBe(0)
+    })
   })
 
   it('caps the length', () => {

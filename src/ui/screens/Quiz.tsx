@@ -5,7 +5,7 @@ import { markForRelearn } from '../../data/services'
 import { syncNow } from '../../sync/manager'
 import { buildPrompt, createPool } from '../../domain/exercises'
 import type { Prompt } from '../../domain/prompt'
-import { FORMAT_LABELS, pickQuizQuestions, quizTagTrends, type QuizQuestion } from '../../domain/quiz'
+import { availableQuizItems, FORMAT_LABELS, pickQuizQuestions, quizTagTrends, sourcePackageIds, sourceTags, type QuizQuestion } from '../../domain/quiz'
 import { dayEnd } from '../../domain/scheduler'
 import { tenseLabel } from '../../domain/tags'
 import type { Note, QuizConfig, QuizFormat, QuizQuestionResult, QuizResult, QuizSource } from '../../domain/types'
@@ -28,9 +28,9 @@ export function Quiz() {
 function sourceLabel(s: QuizSource, pkgNames: Map<string, string>): string {
   switch (s.kind) {
     case 'package':
-      return pkgNames.get(s.packageId) ?? 'Package'
+      return sourcePackageIds(s).map((id) => pkgNames.get(id) ?? 'Package').join(', ')
     case 'tag':
-      return `#${s.tag}`
+      return sourceTags(s).map((t) => `#${t}`).join(', ')
     case 'weak':
       return 'Weak items'
     case 'due':
@@ -44,23 +44,42 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig, al
   const settings = useSettings()
   const [params] = useSearchParams()
   const [kind, setKind] = useState<QuizSource['kind']>((params.get('tag') ? 'tag' : 'random') as QuizSource['kind'])
-  const [packageId, setPackageId] = useState('')
-  const [tag, setTag] = useState(params.get('tag') ?? '')
+  const [packageIds, setPackageIds] = useState<string[]>([])
+  const [tags, setTags] = useState<string[]>(params.get('tag') ? [params.get('tag')!] : [])
   const [length, setLength] = useState(10)
   const [formats, setFormats] = useState<QuizFormat[]>(['choice', 'cloze', 'production'])
   const [timerMin, setTimerMin] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const data = useRepoQuery(async () => {
-    const [packages, notes, quizzes] = await Promise.all([repos.packages.all(), repos.notes.all(), repos.quizzes.all()])
-    return { packages, tags: [...new Set(notes.flatMap((n) => n.tags))].sort(), quizzes }
+    const now = Date.now()
+    const [packages, notes, quizzes, cards, logs] = await Promise.all([
+      repos.packages.all(),
+      repos.notes.all(),
+      repos.quizzes.all(),
+      repos.cards.all(),
+      repos.logs.since(now - 30 * 86_400_000),
+    ])
+    return { packages, tags: [...new Set(notes.flatMap((n) => n.tags))].sort(), quizzes, notes, cards, logs }
   }, [])
   const pkgNames = useMemo(() => new Map(data?.packages.map((p) => [p.id, p.name])), [data])
   const trends = useMemo(() => quizTagTrends(data?.quizzes ?? []).slice(0, 12), [data])
 
+  // Only what exists counts as selected (a tag link can name a tag no item has any more).
+  const chosenPackages = packageIds.filter((id) => data?.packages.some((p) => p.id === id))
+  const chosenTags = tags.filter((t) => data?.tags.includes(t))
+  const source: QuizSource = kind === 'package' ? { kind, packageIds: chosenPackages } : kind === 'tag' ? { kind, tags: chosenTags } : { kind }
+  const multi = kind === 'package' || kind === 'tag'
+  const nothingSelected = (kind === 'package' && !chosenPackages.length) || (kind === 'tag' && !chosenTags.length)
+  // Items the selected packages / tags can give, in the chosen question types (each item once).
+  const available = useMemo(() => {
+    if (!data || !multi) return null
+    const now = Date.now()
+    return availableQuizItems({ notes: data.notes, cards: data.cards, logs: data.logs, config: { source, length, formats, timerSeconds: null }, now, dayEndTs: dayEnd(now, settings.rolloverHour) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `source` is rebuilt from these each render
+  }, [data, multi, kind, packageIds, tags, formats, settings.rolloverHour])
+
   const start = async () => {
-    const source: QuizSource =
-      kind === 'package' ? { kind, packageId: packageId || data?.packages[0]?.id || '' } : kind === 'tag' ? { kind, tag: tag || data?.tags[0] || '' } : { kind }
     const config: QuizConfig = { source, length, formats, timerSeconds: timerMin > 0 ? timerMin * 60 : null }
     const now = Date.now()
     const [notes, cards, logs] = await Promise.all([repos.notes.all(), repos.cards.all(), repos.logs.since(now - 30 * 86_400_000)])
@@ -87,22 +106,19 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig, al
             ))}
           </div>
           {kind === 'package' && (
-            <select className="input mt-2" value={packageId} onChange={(e) => setPackageId(e.target.value)} aria-label="Package">
-              {data.packages.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <CheckList label="Packages" items={data.packages.map((p) => ({ id: p.id, label: p.name }))} selected={chosenPackages} onChange={setPackageIds} />
           )}
-          {kind === 'tag' && (
-            <select className="input mt-2" value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Tag">
-              {data.tags.map((t) => (
-                <option key={t} value={t}>
-                  #{t}
-                </option>
-              ))}
-            </select>
+          {kind === 'tag' && <CheckList label="Tags" items={data.tags.map((t) => ({ id: t, label: `#${t}` }))} selected={chosenTags} onChange={setTags} />}
+          {multi && (
+            <p className="mt-2 text-sm" role="status">
+              {nothingSelected ? (
+                <span className="muted">Select at least one {kind === 'package' ? 'package' : 'tag'}.</span>
+              ) : (
+                <>
+                  <strong>{available}</strong> {available === 1 ? 'item' : 'items'} available
+                </>
+              )}
+            </p>
           )}
         </fieldset>
         <fieldset>
@@ -144,7 +160,7 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig, al
           <input type="number" className="input w-24" min={0} max={120} value={timerMin} onChange={(e) => setTimerMin(Math.max(0, Number(e.target.value) || 0))} />
         </label>
         {error && <p className="text-sm text-rose-700 dark:text-rose-300">{error}</p>}
-        <Button variant="primary" size="lg" disabled={!formats.length} onClick={() => void start()}>
+        <Button variant="primary" size="lg" disabled={!formats.length || nothingSelected} onClick={() => void start()}>
           Start quiz
         </Button>
       </div>
@@ -184,6 +200,52 @@ function QuizSetup({ onStart }: { onStart: (q: QuizQuestion[], c: QuizConfig, al
           )}
         </section>
       )}
+    </div>
+  )
+}
+
+/** A list of checkboxes with Select all / Clear. */
+function CheckList({
+  label,
+  items,
+  selected,
+  onChange,
+}: {
+  label: string
+  items: Array<{ id: string; label: string }>
+  selected: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const chosen = new Set(selected)
+  return (
+    <div className="mt-2 rounded-lg border border-slate-300 dark:border-slate-700">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-1.5 text-sm dark:border-slate-800">
+        <span className="muted">
+          {label}: {selected.length} of {items.length} selected
+        </span>
+        <span className="flex gap-1">
+          <Button size="sm" variant="ghost" onClick={() => onChange(items.map((i) => i.id))}>
+            Select all
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onChange([])}>
+            Clear
+          </Button>
+        </span>
+      </div>
+      <ul className="max-h-60 overflow-y-auto px-3 py-1.5" aria-label={label}>
+        {items.map((i) => (
+          <li key={i.id}>
+            <label className="flex cursor-pointer items-center gap-2 py-1 text-sm">
+              <input
+                type="checkbox"
+                checked={chosen.has(i.id)}
+                onChange={(e) => onChange(e.target.checked ? [...selected, i.id] : selected.filter((x) => x !== i.id))}
+              />
+              <span className="break-all">{i.label}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

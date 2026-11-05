@@ -166,8 +166,10 @@ export interface Package {
 }
 
 export type QuizSource =
-  | { kind: 'package'; packageId: string }
-  | { kind: 'tag'; tag: string }
+  /** Several packages (`packageId`: quizzes saved before multi-select, one package). */
+  | { kind: 'package'; packageIds?: string[]; packageId?: string }
+  /** Several tags (`tag`: quizzes saved before multi-select, one tag). */
+  | { kind: 'tag'; tags?: string[]; tag?: string }
   | { kind: 'weak' }
   | { kind: 'due' }
   | { kind: 'random' }

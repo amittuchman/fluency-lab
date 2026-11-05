@@ -1,6 +1,6 @@
 import { availableExercises, createPool, QUIZ_FORMAT, type ExerciseId } from './exercises'
 import { isActiveCard } from './templates'
-import type { Card, Note, QuizConfig, QuizFormat, QuizResult, ReviewLog } from './types'
+import type { Card, Note, QuizConfig, QuizFormat, QuizResult, QuizSource, ReviewLog } from './types'
 import { groupBy, shuffle } from './util'
 
 /** Quiz format of an exercise; flashcards, own sentences and speaking have no automatic check and are left out. */
@@ -42,8 +42,16 @@ export interface PickInput {
   rand?: () => number
 }
 
+/** The packages / tags a quiz source draws from (one, in quizzes saved before multi-select). */
+export function sourcePackageIds(s: Extract<QuizSource, { kind: 'package' }>): string[] {
+  return s.packageIds ?? (s.packageId ? [s.packageId] : [])
+}
+export function sourceTags(s: Extract<QuizSource, { kind: 'tag' }>): string[] {
+  return s.tags ?? (s.tag ? [s.tag] : [])
+}
+
 /**
- * Choose quiz questions: filter notes by source, then one card per note in an allowed format
+ * Choose quiz questions: filter notes by source (several packages or tags: any of them, each item once), then one card per note in an allowed format
  * (any template of the note, locked or not: a quiz is an assessment).
  */
 export function pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs, rand = Math.random }: PickInput): QuizQuestion[] {
@@ -54,12 +62,16 @@ export function pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs, r
   let pool: Note[]
   const src = config.source
   switch (src.kind) {
-    case 'package':
-      pool = shuffle(live.filter((n) => n.packageId === src.packageId), rand)
+    case 'package': {
+      const ids = new Set(sourcePackageIds(src))
+      pool = shuffle(live.filter((n) => n.packageId !== null && ids.has(n.packageId)), rand)
       break
-    case 'tag':
-      pool = shuffle(live.filter((n) => n.tags.includes(src.tag)), rand)
+    }
+    case 'tag': {
+      const tags = new Set(sourceTags(src))
+      pool = shuffle(live.filter((n) => n.tags.some((t) => tags.has(t))), rand)
       break
+    }
     case 'due':
       pool = shuffle(
         live.filter((n) => (byNote.get(n.id) ?? []).some((c) => isActiveCard(c) && !c.suspended && c.fsrs.state !== 0 && c.fsrs.due < dayEndTs)),
@@ -93,6 +105,11 @@ export function pickQuizQuestions({ notes, cards, logs, config, now, dayEndTs, r
     out.push({ note, card, exercise: exercises[Math.floor(rand() * exercises.length)]! })
   }
   return src.kind === 'weak' ? shuffle(out, rand) : out
+}
+
+/** How many items a quiz with this config can ask (each item once), whatever the length. */
+export function availableQuizItems(input: Omit<PickInput, 'rand'>): number {
+  return pickQuizQuestions({ ...input, config: { ...input.config, length: Infinity }, rand: () => 0 }).length
 }
 
 export interface TagTrend {
